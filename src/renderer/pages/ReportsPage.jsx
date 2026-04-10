@@ -32,16 +32,33 @@ export default function ReportsPage() {
   const [topCategories, setTopCategories] = useState([]);
 
   const loadReports = async () => {
+    if (!startDate || !endDate) {
+      setError('Start date and end date are required.');
+      return;
+    }
+
     setLoading(true);
     setError('');
 
     try {
-      const [overviewData, categoryData, topItemsData, topCategoriesData] = await Promise.all([
+      const results = await Promise.allSettled([
         ipcService.invoke('get-sales-overview-data', startDate, endDate),
         ipcService.invoke('get-category-wise-sales-data', startDate, endDate),
         ipcService.requestReply('get-top-selling-items', 'top-selling-items-response', { startDate, endDate }),
         ipcService.requestReply('get-top-selling-categories', 'top-selling-categories-response', { startDate, endDate }),
       ]);
+
+      const errors = results.filter((r) => r.status === 'rejected');
+      if (errors.length > 0) {
+        const firstError = errors[0].reason;
+        console.error('Some reports failed:', errors.map((e) => e.reason));
+        setError(`Failed to load ${errors.length} report(s). Showing partial data. ${firstError?.message || ''}`);
+      }
+
+      const overviewData = results[0].status === 'fulfilled' ? results[0].value : [];
+      const categoryData = results[1].status === 'fulfilled' ? results[1].value : [];
+      const topItemsData = results[2].status === 'fulfilled' ? results[2].value : [];
+      const topCategoriesData = results[3].status === 'fulfilled' ? results[3].value : [];
 
       setSalesOverview(Array.isArray(overviewData) ? overviewData : []);
       setCategorySales(Array.isArray(categoryData) ? categoryData : []);
@@ -119,10 +136,10 @@ export default function ReportsPage() {
               <tbody>
                 {salesOverview.length === 0 ? (
                   <tr><td colSpan={3} className="px-3 py-6 text-sm text-slate-500">No sales overview data.</td></tr>
-                ) : salesOverview.map((row) => (
-                  <tr key={row.date} className="border-b border-slate-100">
+                ) : salesOverview.map((row, i) => (
+                  <tr key={row.date ?? `so-${i}`} className="border-b border-slate-100">
                     <td className="px-3 py-2 text-sm">{formatDate(row.date)}</td>
-                    <td className="px-3 py-2 text-sm">{row.totalSales}</td>
+                    <td className="px-3 py-2 text-sm">{row.totalSales ?? 0}</td>
                     <td className="px-3 py-2 text-sm">{formatCurrency(row.totalRevenue)}</td>
                   </tr>
                 ))}
@@ -145,10 +162,10 @@ export default function ReportsPage() {
               <tbody>
                 {categorySales.length === 0 ? (
                   <tr><td colSpan={3} className="px-3 py-6 text-sm text-slate-500">No category sales data.</td></tr>
-                ) : categorySales.map((row) => (
-                  <tr key={row.catid} className="border-b border-slate-100">
-                    <td className="px-3 py-2 text-sm">{row.catname}</td>
-                    <td className="px-3 py-2 text-sm">{row.totalSales}</td>
+                ) : categorySales.map((row, i) => (
+                  <tr key={row.catid ?? `cs-${i}`} className="border-b border-slate-100">
+                    <td className="px-3 py-2 text-sm">{row.catname ?? '-'}</td>
+                    <td className="px-3 py-2 text-sm">{row.totalSales ?? 0}</td>
                     <td className="px-3 py-2 text-sm">{formatCurrency(row.totalRevenue)}</td>
                   </tr>
                 ))}
@@ -170,10 +187,10 @@ export default function ReportsPage() {
               <tbody>
                 {topItems.length === 0 ? (
                   <tr><td colSpan={2} className="px-3 py-6 text-sm text-slate-500">No top-item data.</td></tr>
-                ) : topItems.map((row) => (
-                  <tr key={row.date} className="border-b border-slate-100">
+                ) : topItems.map((row, i) => (
+                  <tr key={row.date ?? `ti-${i}`} className="border-b border-slate-100">
                     <td className="px-3 py-2 text-sm">{formatDate(row.date)}</td>
-                    <td className="px-3 py-2 text-sm">{row.most_sold_item}</td>
+                    <td className="px-3 py-2 text-sm">{row.most_sold_item ?? '-'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -195,11 +212,11 @@ export default function ReportsPage() {
               <tbody>
                 {topCategories.length === 0 ? (
                   <tr><td colSpan={3} className="px-3 py-6 text-sm text-slate-500">No top-category data.</td></tr>
-                ) : topCategories.map((row) => (
-                  <tr key={row.date} className="border-b border-slate-100">
+                ) : topCategories.map((row, i) => (
+                  <tr key={row.date ?? `tc-${i}`} className="border-b border-slate-100">
                     <td className="px-3 py-2 text-sm">{formatDate(row.date)}</td>
-                    <td className="px-3 py-2 text-sm">{row.category_name}</td>
-                    <td className="px-3 py-2 text-sm">{row.total_quantity}</td>
+                    <td className="px-3 py-2 text-sm">{row.category_name ?? '-'}</td>
+                    <td className="px-3 py-2 text-sm">{row.total_quantity ?? 0}</td>
                   </tr>
                 ))}
               </tbody>

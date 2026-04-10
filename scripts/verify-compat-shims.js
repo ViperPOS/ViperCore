@@ -3,83 +3,114 @@ const path = require("path");
 
 const projectRoot = path.resolve(__dirname, "..");
 
-const jsShimPattern = /^module\.exports = require\("\.\/src\/renderer\/modules\/(.+)"\);\s*$/;
-const cssShimPattern = /^@import url\("\.\/src\/renderer\/styles\/(.+)"\);\s*$/;
-const mainLauncherPattern = /^require\("\.\/src\/main\/main\.js"\);\s*$/;
-const mainShimPattern = /^module\.exports = require\("\.\/src\/main\/(.+)"\);\s*$/;
+let hasErrors = false;
+function fail(msg) {
+  console.error(`FAIL: ${msg}`);
+  hasErrors = true;
+}
 
-function listRootFiles() {
-  return fs
+function verifyRootShims() {
+  const rootJsFiles = fs
+    .readdirSync(projectRoot, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
+    .map((entry) => entry.name);
+
+  const expectedShims = {
+    "main.js": "src/main/main.js",
+    "backup.js": "src/main/backup.js",
+    "restore.js": "src/main/restore.js",
+  };
+
+  for (const [shimName, target] of Object.entries(expectedShims)) {
+    const shimPath = path.join(projectRoot, shimName);
+    if (!fs.existsSync(shimPath)) {
+      fail(`Missing root shim: ${shimName} -> ${target}`);
+      continue;
+    }
+    const content = fs.readFileSync(shimPath, "utf8").trim();
+    const expectedContent = target === "src/main/main.js"
+      ? `require("./${target}");`
+      : `module.exports = require("./${target}");`;
+    if (content !== expectedContent) {
+      fail(`Root shim ${shimName} has unexpected content. Expected: ${expectedContent}`);
+    }
+
+    const targetPath = path.join(projectRoot, target);
+    if (!fs.existsSync(targetPath)) {
+      fail(`Root shim ${shimName} points to missing target: ${target}`);
+    }
+  }
+}
+
+function verifyNoLegacyShims() {
+  const rootFiles = fs
     .readdirSync(projectRoot, { withFileTypes: true })
     .filter((entry) => entry.isFile())
     .map((entry) => entry.name);
+
+  const rendererShims = rootFiles.filter((name) => {
+    if (!name.endsWith(".js") && !name.endsWith(".css")) return false;
+    const content = fs.readFileSync(path.join(projectRoot, name), "utf8").trim();
+    return (
+      content.includes("src/renderer/modules/") ||
+      content.includes("src/renderer/styles/")
+    );
+  });
+
+  if (rendererShims.length > 0) {
+    fail(`Legacy renderer shims found at root (should be removed): ${rendererShims.join(", ")}`);
+  }
 }
 
-function verifyShims() {
-  const files = listRootFiles();
-  const jsFiles = files.filter((name) => name.endsWith(".js"));
-  const cssFiles = files.filter((name) => name.endsWith(".css"));
+function verifyReactEntryPoints() {
+  const requiredReactFiles = [
+    "src/renderer/index.html",
+    "src/renderer/main.jsx",
+    "src/renderer/App.jsx",
+    "src/renderer/services/ipcService.js",
+  ];
 
-  const missingTargets = [];
-
-  for (const fileName of jsFiles) {
-    const filePath = path.join(projectRoot, fileName);
-    const content = fs.readFileSync(filePath, "utf8").trim();
-
-    const mainLauncherMatch = content.match(mainLauncherPattern);
-    if (mainLauncherMatch) {
-      const target = path.join(projectRoot, "src", "main", "main.js");
-      if (!fs.existsSync(target)) {
-        missingTargets.push({ fileName, target });
-      }
-      continue;
-    }
-
-    const mainShimMatch = content.match(mainShimPattern);
-    if (mainShimMatch) {
-      const target = path.join(projectRoot, "src", "main", mainShimMatch[1]);
-      if (!fs.existsSync(target)) {
-        missingTargets.push({ fileName, target });
-      }
-      continue;
-    }
-
-    const match = content.match(jsShimPattern);
-
-    if (!match) {
-      continue;
-    }
-
-    const target = path.join(projectRoot, "src", "renderer", "modules", match[1]);
-    if (!fs.existsSync(target)) {
-      missingTargets.push({ fileName, target });
+  for (const filePath of requiredReactFiles) {
+    const fullPath = path.join(projectRoot, filePath);
+    if (!fs.existsSync(fullPath)) {
+      fail(`Missing React entry point: ${filePath}`);
     }
   }
 
-  for (const fileName of cssFiles) {
-    const filePath = path.join(projectRoot, fileName);
-    const content = fs.readFileSync(filePath, "utf8").trim();
-    const match = content.match(cssShimPattern);
-
-    if (!match) {
-      continue;
-    }
-
-    const target = path.join(projectRoot, "src", "renderer", "styles", match[1]);
-    if (!fs.existsSync(target)) {
-      missingTargets.push({ fileName, target });
+  const indexHtml = path.join(projectRoot, "src/renderer/index.html");
+  if (fs.existsSync(indexHtml)) {
+    const content = fs.readFileSync(indexHtml, "utf8");
+    if (!content.includes('id="root"')) {
+      fail('src/renderer/index.html is missing the React mount node (<div id="root">)');
     }
   }
+}
 
-  if (missingTargets.length > 0) {
-    console.error("Compatibility shim verification failed.");
-    for (const item of missingTargets) {
-      console.error(`- ${item.fileName} -> missing target ${item.target}`);
-    }
+function verifyViteConfig() {
+  const viteConfigPath = path.join(projectRoot, "vite.config.js");
+  if (!fs.existsSync(viteConfigPath)) {
+    fail("Missing vite.config.js");
+    return;
+  }
+
+  const content = fs.readFileSync(viteConfigPath, "utf8");
+  if (!content.includes("src/renderer")) {
+    fail("vite.config.js does not reference src/renderer as root or entry");
+  }
+}
+
+function main() {
+  verifyRootShims();
+  verifyNoLegacyShims();
+  verifyReactEntryPoints();
+  verifyViteConfig();
+
+  if (hasErrors) {
+    console.error("\nArchitecture verification failed.");
     process.exit(1);
   }
 
-  console.log("Compatibility shim verification passed.");
+  console.log("Architecture verification passed.");
 }
 
-verifyShims();
+main();

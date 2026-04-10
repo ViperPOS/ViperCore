@@ -49,6 +49,10 @@ export default function OperationsPage() {
   };
 
   const fetchDiscountedOrders = async () => {
+    if (!startDate || !endDate) {
+      setError('Select start and end dates first.');
+      return;
+    }
     setLoadingDiscounted(true);
     setError('');
     setMessage('');
@@ -68,6 +72,10 @@ export default function OperationsPage() {
   };
 
   const fetchDeletedOrders = async () => {
+    if (!startDate || !endDate) {
+      setError('Select start and end dates first.');
+      return;
+    }
     setLoadingDeleted(true);
     setError('');
     setMessage('');
@@ -170,9 +178,9 @@ export default function OperationsPage() {
               <tbody>
                 {todayOrders.length === 0 ? (
                   <tr><td colSpan={5} className="px-3 py-6 text-sm text-slate-500">No today-order data loaded.</td></tr>
-                ) : todayOrders.map((order) => (
-                  <tr key={order.billno} className="border-b border-slate-100">
-                    <td className="px-3 py-2 text-sm">{order.billno}</td>
+                ) : todayOrders.map((order, i) => (
+                  <tr key={order.billno ?? `today-${i}`} className="border-b border-slate-100">
+                    <td className="px-3 py-2 text-sm">{order.billno ?? '-'}</td>
                     <td className="px-3 py-2 text-sm">{formatDate(order.date)}</td>
                     <td className="px-3 py-2 text-sm">{order.cashier_name || '-'}</td>
                     <td className="px-3 py-2 text-sm">{formatCurrency(order.price)}</td>
@@ -201,9 +209,9 @@ export default function OperationsPage() {
               <tbody>
                 {discountedOrders.length === 0 ? (
                   <tr><td colSpan={6} className="px-3 py-6 text-sm text-slate-500">No discounted-order data loaded.</td></tr>
-                ) : discountedOrders.map((order) => (
-                  <tr key={order.billno} className="border-b border-slate-100">
-                    <td className="px-3 py-2 text-sm">{order.billno}</td>
+                ) : discountedOrders.map((order, i) => (
+                  <tr key={order.billno ?? `disc-${i}`} className="border-b border-slate-100">
+                    <td className="px-3 py-2 text-sm">{order.billno ?? '-'}</td>
                     <td className="px-3 py-2 text-sm">{formatDate(order.date)}</td>
                     <td className="px-3 py-2 text-sm">{formatCurrency(order.Initial_price)}</td>
                     <td className="px-3 py-2 text-sm">{Number(order.discount_percentage || 0).toFixed(2)}%</td>
@@ -233,9 +241,9 @@ export default function OperationsPage() {
               <tbody>
                 {deletedOrders.length === 0 ? (
                   <tr><td colSpan={6} className="px-3 py-6 text-sm text-slate-500">No deleted-order data loaded.</td></tr>
-                ) : deletedOrders.map((order) => (
-                  <tr key={order.billno} className="border-b border-slate-100">
-                    <td className="px-3 py-2 text-sm">{order.billno}</td>
+                ) : deletedOrders.map((order, i) => (
+                  <tr key={order.billno ?? `del-${i}`} className="border-b border-slate-100">
+                    <td className="px-3 py-2 text-sm">{order.billno ?? '-'}</td>
                     <td className="px-3 py-2 text-sm">{formatDate(order.date)}</td>
                     <td className="px-3 py-2 text-sm">{order.cashier_name || '-'}</td>
                     <td className="px-3 py-2 text-sm">{formatCurrency(order.price)}</td>

@@ -1,16 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import ipcService from '@/services/ipcService';
 
 function MenuRow({ item, onToggleOn, onToggleActive, busy }) {
   return (
     <tr className="border-b border-slate-100 hover:bg-slate-50">
-      <td className="px-3 py-2 text-sm text-slate-700">{item.fid}</td>
+      <td className="px-3 py-2 text-sm text-slate-700">{item.fid ?? '-'}</td>
       <td className="px-3 py-2">
-        <p className="text-sm font-semibold text-slate-900">{item.fname}</p>
-        <p className="text-xs text-slate-500">{item.category_name}</p>
+        <p className="text-sm font-semibold text-slate-900">{item.fname ?? 'Unknown'}</p>
+        <p className="text-xs text-slate-500">{item.category_name ?? '-'}</p>
       </td>
-      <td className="px-3 py-2 text-sm font-medium text-slate-800">Rs. {Number(item.cost).toFixed(2)}</td>
+      <td className="px-3 py-2 text-sm font-medium text-slate-800">Rs. {Number(item.cost ?? 0).toFixed(2)}</td>
       <td className="px-3 py-2">
         <span className={`text-xs px-2 py-1 rounded-full ${item.veg ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
           {item.veg ? 'VEG' : 'NON-VEG'}
@@ -36,33 +36,37 @@ export default function MenuPage() {
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
+  const mountedRef = useRef(true);
 
-  const loadMenuItems = async () => {
+  const loadMenuItems = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
       const data = await ipcService.invoke('get-menu-items');
+      if (!mountedRef.current) return;
       setItems(Array.isArray(data) ? data : []);
     } catch (fetchError) {
       console.error('Failed to load menu items:', fetchError);
-      setError('Could not load menu items.');
+      if (mountedRef.current) setError('Could not load menu items.');
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     loadMenuItems();
-  }, []);
+    return () => { mountedRef.current = false; };
+  }, [loadMenuItems]);
 
   const filteredItems = useMemo(() => {
     const text = query.trim().toLowerCase();
     if (!text) return items;
     return items.filter((item) => {
       return (
-        String(item.fid).includes(text) ||
-        item.fname?.toLowerCase().includes(text) ||
-        item.category_name?.toLowerCase().includes(text)
+        String(item?.fid ?? '').includes(text) ||
+        (item?.fname ?? '').toLowerCase().includes(text) ||
+        (item?.category_name ?? '').toLowerCase().includes(text)
       );
     });
   }, [items, query]);
@@ -140,7 +144,7 @@ export default function MenuPage() {
                 </tr>
               ) : null}
               {!loading && filteredItems.map((item) => (
-                <MenuRow key={item.fid} item={item} onToggleOn={toggleOn} onToggleActive={toggleActive} busy={busy} />
+                <MenuRow key={item.fid ?? item._idx} item={item} onToggleOn={toggleOn} onToggleActive={toggleActive} busy={busy} />
               ))}
             </tbody>
           </table>

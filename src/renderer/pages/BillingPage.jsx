@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import ipcService from '@/services/ipcService';
 
@@ -13,6 +13,8 @@ function formatCurrency(value) {
   }).format(Number(value || 0));
 }
 
+const BILL_TIMEOUT_MS = 15000;
+
 export default function BillingPage({ user }) {
   const [categories, setCategories] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('');
@@ -24,22 +26,25 @@ export default function BillingPage({ user }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const mountedRef = useRef(true);
+  const billTimerRef = useRef(null);
 
   const loadCategories = async () => {
     setLoading(true);
     setError('');
     try {
       const result = await ipcService.requestReply('get-categories-event', 'categories-response', undefined);
+      if (!mountedRef.current) return;
       const safeCategories = Array.isArray(result?.categories) ? result.categories : [];
       setCategories(safeCategories);
       if (safeCategories.length > 0) {
-        setSelectedCategory((prev) => prev || safeCategories[0].catname);
+        setSelectedCategory((prev) => prev || (safeCategories[0]?.catname ?? ''));
       }
     } catch (fetchError) {
       console.error('Failed loading categories:', fetchError);
-      setError('Could not load categories.');
+      if (mountedRef.current) setError('Could not load categories.');
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   };
 
@@ -53,34 +58,42 @@ export default function BillingPage({ user }) {
     setError('');
     try {
       const items = await ipcService.invoke('get-food-items', categoryName);
+      if (!mountedRef.current) return;
       setMenuItems(Array.isArray(items) ? items : []);
     } catch (fetchError) {
       console.error('Failed loading food items:', fetchError);
-      setError('Could not load food items for selected category.');
-      setMenuItems([]);
+      if (mountedRef.current) {
+        setError('Could not load food items for selected category.');
+        setMenuItems([]);
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   };
 
   useEffect(() => {
+    mountedRef.current = true;
     loadCategories();
+    return () => { mountedRef.current = false; };
   }, []);
 
   useEffect(() => {
+    if (!selectedCategory) return;
     loadItems(selectedCategory);
   }, [selectedCategory]);
 
   useEffect(() => {
     const onSaved = (payload) => {
+      if (billTimerRef.current) { clearTimeout(billTimerRef.current); billTimerRef.current = null; }
       setSaving(false);
-      setMessage(`Bill saved successfully. KOT ${payload?.kot || '-'} | Order ${payload?.orderId || '-'}`);
+      setMessage(`Bill saved successfully. KOT ${payload?.kot ?? '-'} | Order ${payload?.orderId ?? '-'}`);
       setCart([]);
       setDiscountAmount('');
       setDiscountPercent('');
     };
 
     const onHeld = () => {
+      if (billTimerRef.current) { clearTimeout(billTimerRef.current); billTimerRef.current = null; }
       setSaving(false);
       setMessage('Bill held successfully.');
       setCart([]);
@@ -89,6 +102,7 @@ export default function BillingPage({ user }) {
     };
 
     const onError = (payload) => {
+      if (billTimerRef.current) { clearTimeout(billTimerRef.current); billTimerRef.current = null; }
       setSaving(false);
       setError(payload?.error || 'Billing action failed.');
     };
@@ -120,8 +134,8 @@ export default function BillingPage({ user }) {
         ...prev,
         {
           foodId: item.fid,
-          name: item.fname,
-          price: Number(item.cost),
+          name: item.fname ?? 'Unknown',
+          price: Number(item.cost ?? 0),
           quantity: 1,
         },
       ];
@@ -189,6 +203,12 @@ export default function BillingPage({ user }) {
       orderItems: toOrderItems(),
       totalAmount: finalTotal,
     });
+
+    billTimerRef.current = setTimeout(() => {
+      setSaving(false);
+      setError('Timed out waiting for bill confirmation.');
+      billTimerRef.current = null;
+    }, BILL_TIMEOUT_MS);
   };
 
   const holdBill = () => {
@@ -210,6 +230,12 @@ export default function BillingPage({ user }) {
       date: todayIsoDate(),
       orderItems: toOrderItems(),
     });
+
+    billTimerRef.current = setTimeout(() => {
+      setSaving(false);
+      setError('Timed out waiting for hold confirmation.');
+      billTimerRef.current = null;
+    }, BILL_TIMEOUT_MS);
   };
 
   return (
@@ -226,12 +252,12 @@ export default function BillingPage({ user }) {
         <div className="flex flex-wrap gap-2">
           {categories.map((category) => (
             <Button
-              key={category.catid}
+              key={category.catid ?? category.catname}
               size="sm"
               variant={selectedCategory === category.catname ? 'default' : 'secondary'}
-              onClick={() => setSelectedCategory(category.catname)}
+              onClick={() => setSelectedCategory(category.catname ?? '')}
             >
-              {category.catname}
+              {category.catname ?? 'Unknown'}
             </Button>
           ))}
         </div>
@@ -241,12 +267,12 @@ export default function BillingPage({ user }) {
           {!loading && menuItems.length === 0 ? <p className="text-sm text-slate-500 col-span-full">No items available.</p> : null}
           {!loading && menuItems.map((item) => (
             <button
-              key={item.fid}
+              key={item.fid ?? item._idx ?? Math.random()}
               type="button"
               onClick={() => addToCart(item)}
               className="rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 p-3 text-left"
             >
-              <p className="font-semibold text-slate-900">{item.fname}</p>
+              <p className="font-semibold text-slate-900">{item.fname ?? 'Unknown'}</p>
               <p className="text-sm text-slate-600 mt-1">{formatCurrency(item.cost)}</p>
             </button>
           ))}

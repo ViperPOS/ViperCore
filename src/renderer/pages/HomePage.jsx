@@ -6,12 +6,12 @@ function ItemCard({ item }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md transition-shadow">
       <div className="flex items-start justify-between gap-3">
-        <h3 className="font-semibold text-slate-900 leading-tight">{item.fname}</h3>
+        <h3 className="font-semibold text-slate-900 leading-tight">{item.fname ?? 'Unknown'}</h3>
         <span className={`text-xs px-2 py-1 rounded-full ${item.veg ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
           {item.veg ? 'VEG' : 'NON-VEG'}
         </span>
       </div>
-      <p className="mt-3 text-lg font-black text-[#0f766e]">Rs. {Number(item.cost).toFixed(2)}</p>
+      <p className="mt-3 text-lg font-black text-[#0f766e]">Rs. {Number(item.cost ?? 0).toFixed(2)}</p>
     </div>
   );
 }
@@ -116,12 +116,12 @@ export default function HomePage() {
             const active = selectedCategory === category.catname;
             return (
               <Button
-                key={category.catid}
+                key={category.catid ?? category.catname}
                 variant={active ? 'default' : 'secondary'}
                 size="sm"
-                onClick={() => setSelectedCategory(category.catname)}
+                onClick={() => setSelectedCategory(category.catname ?? '')}
               >
-                {category.catname}
+                {category.catname ?? 'Unknown'}
               </Button>
             );
           })}
@@ -135,9 +135,9 @@ export default function HomePage() {
         {!loadingItems && items.length === 0 ? (
           <p className="text-sm text-slate-500 col-span-full">No items available for this category.</p>
         ) : null}
-        {items.map((item) => (
-          <ItemCard key={item.fid} item={item} />
-        ))}
+{items.map((item) => (
+           <ItemCard key={item.fid ?? item._idx ?? Math.random()} item={item} />
+         ))}
       </section>
     </div>
   );

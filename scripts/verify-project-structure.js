@@ -7,10 +7,12 @@ const requiredPaths = [
   "src/main/main.js",
   "src/main/backup.js",
   "src/main/restore.js",
-  "src/renderer/modules/renderer.js",
-  "src/renderer/modules/ui.js",
-  "src/renderer/styles/styles.css",
-  "src/public/index.html",
+  "src/renderer/index.html",
+  "src/renderer/main.jsx",
+  "src/renderer/App.jsx",
+  "src/renderer/pages/DashboardPage.jsx",
+  "src/renderer/services/ipcService.js",
+  "vite.config.js",
   "main.js",
   "backup.js",
   "restore.js",
@@ -64,33 +66,16 @@ function ensureRootIsClean() {
     rootEntries.filter((entry) => entry.isFile()).map((entry) => entry.name)
   );
 
-  const moduleFiles = fs
-    .readdirSync(path.join(projectRoot, "src", "renderer", "modules"))
-    .filter((name) => name.endsWith(".js"));
+  const modulesDir = path.join(projectRoot, "src", "renderer", "modules");
+  if (fs.existsSync(modulesDir)) {
+    const moduleFiles = fs
+      .readdirSync(modulesDir)
+      .filter((name) => name.endsWith(".js"));
 
-  const styleFiles = fs
-    .readdirSync(path.join(projectRoot, "src", "renderer", "styles"))
-    .filter((name) => name.endsWith(".css"));
-
-  const duplicateRootModules = moduleFiles.filter((name) => rootFiles.has(name));
-  const duplicateRootStyles = styleFiles.filter((name) => rootFiles.has(name));
-
-  if (duplicateRootModules.length > 0 || duplicateRootStyles.length > 0) {
-    const lines = [];
-
+    const duplicateRootModules = moduleFiles.filter((name) => rootFiles.has(name));
     if (duplicateRootModules.length > 0) {
-      lines.push(
-        `Root contains moved renderer modules:\n- ${duplicateRootModules.join("\n- ")}`
-      );
+      fail(`Root contains moved renderer modules:\n- ${duplicateRootModules.join("\n- ")}`);
     }
-
-    if (duplicateRootStyles.length > 0) {
-      lines.push(
-        `Root contains moved renderer styles:\n- ${duplicateRootStyles.join("\n- ")}`
-      );
-    }
-
-    fail(lines.join("\n"));
   }
 
   const forbiddenPresent = forbiddenRootFiles.filter((name) => rootFiles.has(name));
@@ -99,47 +84,16 @@ function ensureRootIsClean() {
   }
 }
 
-function ensureHtmlUsesSrcPaths() {
-  const indexHtml = fs.readFileSync(path.join(projectRoot, "src/public/index.html"), "utf8");
+function ensureRendererIndexUsesViteEntry() {
+  const rendererIndexPath = path.join(projectRoot, "src/renderer/index.html");
+  const rendererIndex = fs.readFileSync(rendererIndexPath, "utf8");
 
-  const scriptMatch = /<script\s+src="([^"]+)"/g;
-  const linkMatch = /<link\s+[^>]*href="([^"]+)"/g;
-
-  const scriptPaths = [];
-  const cssPaths = [];
-
-  let scriptResult;
-  while ((scriptResult = scriptMatch.exec(indexHtml)) !== null) {
-    scriptPaths.push(scriptResult[1]);
+  if (!rendererIndex.includes('<div id="root"></div>')) {
+    fail("src/renderer/index.html is missing the #root mount node");
   }
 
-  let linkResult;
-  while ((linkResult = linkMatch.exec(indexHtml)) !== null) {
-    cssPaths.push(linkResult[1]);
-  }
-
-  const invalidScriptPaths = scriptPaths.filter((p) => {
-    if (p.startsWith("http://") || p.startsWith("https://")) {
-      return false;
-    }
-
-    return p.endsWith(".js") && !p.startsWith("src/renderer/modules/") && !p.includes("renderer/modules/");
-  });
-
-  const invalidCssPaths = cssPaths.filter((p) => {
-    if (p.startsWith("http://") || p.startsWith("https://")) {
-      return false;
-    }
-
-    return p.endsWith(".css") && !p.startsWith("src/renderer/styles/") && !p.includes("renderer/styles/");
-  });
-
-  if (invalidScriptPaths.length > 0) {
-    fail(`index.html references non-src renderer scripts:\n- ${invalidScriptPaths.join("\n- ")}`);
-  }
-
-  if (invalidCssPaths.length > 0) {
-    fail(`index.html references non-src renderer styles:\n- ${invalidCssPaths.join("\n- ")}`);
+  if (!rendererIndex.includes('src="/main.jsx"')) {
+    fail("src/renderer/index.html must include Vite entry script /main.jsx");
   }
 }
 
@@ -179,7 +133,7 @@ function ensureOfflineDependencyPolicy() {
 function main() {
   ensureRequiredPathsExist();
   ensureRootIsClean();
-  ensureHtmlUsesSrcPaths();
+  ensureRendererIndexUsesViteEntry();
   ensureOfflineDependencyPolicy();
   console.log("Project structure verification passed.");
 }

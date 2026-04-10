@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import ipcService from '@/services/ipcService';
 
@@ -10,23 +10,28 @@ export default function InventoryPage() {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const mountedRef = useRef(true);
 
-  const fetchInventory = async () => {
+  const fetchInventory = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
       const result = await ipcService.requestReply('get-inventory-list', 'inventory-list-response', undefined);
+      if (!mountedRef.current) return;
       setItems(Array.isArray(result?.inventory) ? result.inventory : []);
     } catch (fetchError) {
       console.error('Failed to fetch inventory:', fetchError);
-      setError('Could not load inventory list.');
-      setItems([]);
+      if (mountedRef.current) {
+        setError('Could not load inventory list.');
+        setItems([]);
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     fetchInventory();
 
     const onExternalUpdate = () => {
@@ -35,9 +40,10 @@ export default function InventoryPage() {
 
     ipcService.on('inventory-item-updated', onExternalUpdate);
     return () => {
+      mountedRef.current = false;
       ipcService.removeListener('inventory-item-updated', onExternalUpdate);
     };
-  }, []);
+  }, [fetchInventory]);
 
   const filteredItems = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -136,7 +142,7 @@ export default function InventoryPage() {
     setBusy(true);
     setError('');
     try {
-      await ipcService.requestReply('delete-inventory-item', 'inventory-item-deleted', item.inv_no);
+      await ipcService.requestReply('delete-inventory-item', 'inventory-item-deleted', { inv_no: item.inv_no });
       await fetchInventory();
     } catch (deleteError) {
       console.error('Failed to delete item:', deleteError);
@@ -197,9 +203,9 @@ export default function InventoryPage() {
                 <tr><td colSpan={4} className="px-3 py-8 text-sm text-slate-500">No inventory items found.</td></tr>
               ) : null}
               {!loading && filteredItems.map((item) => (
-                <tr key={item.inv_no} className="border-b border-slate-100">
-                  <td className="px-3 py-2 text-sm">{item.inv_no}</td>
-                  <td className="px-3 py-2 text-sm font-medium">{item.inv_item}</td>
+                <tr key={item.inv_no ?? index} className="border-b border-slate-100">
+                  <td className="px-3 py-2 text-sm">{item.inv_no ?? '-'}</td>
+                  <td className="px-3 py-2 text-sm font-medium">{item.inv_item ?? 'Unknown'}</td>
                   <td className="px-3 py-2">
                     <input
                       type="number"

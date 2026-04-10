@@ -58,7 +58,7 @@ export default function DashboardPage({ user, onLogout }) {
 
     return (
       <section className="rounded-2xl border border-dashed border-slate-300 bg-white p-8">
-        <h2 className="text-xl font-bold mb-2">{activeView[0].toUpperCase() + activeView.slice(1)} migration next</h2>
+        <h2 className="text-xl font-bold mb-2">{(activeView?.[0] || '').toUpperCase() + (activeView || '').slice(1)} migration next</h2>
         <p className="text-slate-600">
           This section is queued for migration. Home is now live on React with real IPC data.
         </p>

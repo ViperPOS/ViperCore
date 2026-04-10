@@ -25,6 +25,9 @@ export default function App() {
         }
       } catch (sessionError) {
         console.error('Failed to restore session:', sessionError);
+        if (mounted) {
+          setError('Unable to restore previous session.');
+        }
       } finally {
         if (mounted) {
           setBooting(false);

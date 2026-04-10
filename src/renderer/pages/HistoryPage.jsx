@@ -22,6 +22,11 @@ export default function HistoryPage() {
   const [orders, setOrders] = useState([]);
 
   const fetchHistory = async () => {
+    if (!startDate || !endDate) {
+      setError('Start date and end date are required.');
+      return;
+    }
+
     setLoading(true);
     setError('');
     try {
@@ -121,9 +126,9 @@ export default function HistoryPage() {
                   <td colSpan={9} className="px-3 py-8 text-sm text-slate-500">No orders found for selected dates.</td>
                 </tr>
               ) : null}
-              {!loading && orders.map((order) => (
-                <tr key={order.billno} className="border-b border-slate-100 align-top">
-                  <td className="px-3 py-2 text-sm">{order.billno}</td>
+              {!loading && orders.map((order, i) => (
+                <tr key={order.billno ?? `order-${i}`} className="border-b border-slate-100 align-top">
+                  <td className="px-3 py-2 text-sm">{order.billno ?? '-'}</td>
                   <td className="px-3 py-2 text-sm">{formatDate(order.date)}</td>
                   <td className="px-3 py-2 text-sm">{order.cashier_name || '-'}</td>
                   <td className="px-3 py-2 text-sm">{order.kot || '-'}</td>
