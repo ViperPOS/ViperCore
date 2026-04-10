@@ -16,6 +16,15 @@ const publicPath = path.join(basePath, "src", "public");
 console.log(`Base path: ${basePath}`);
 console.log(`Resources path: ${resourcesPath}`);
 
+// === React + Vite App Loading ===
+function getMainWindowUrl() {
+    if (app.isPackaged) {
+        return `file://${path.join(__dirname, '..', '..', 'dist', 'index.html')}`;
+    } else {
+        return 'http://localhost:5173';
+    }
+}
+
 const loginHtmlPath = path.join(publicPath, "login.html");
 
 // Prevent multiple app instances from competing for the same SQLite file.
@@ -336,7 +345,8 @@ function createMainWindow() {
     console.log('✅ Renderer became responsive again');
   });
 
-    mainWindow.loadFile(loginHtmlPath).catch(console.error);
+    // Load React app from Vite dev server or production build
+    mainWindow.loadURL(getMainWindowUrl()).catch(console.error);
 
   mainWindow.once("ready-to-show", () => {
       // Tell splash to fade out
