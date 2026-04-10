@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import HomePage from '@/pages/HomePage';
+import HistoryPage from '@/pages/HistoryPage';
+import InventoryPage from '@/pages/InventoryPage';
 import MenuPage from '@/pages/MenuPage';
 
 export default function DashboardPage({ user, onLogout }) {
@@ -20,6 +22,14 @@ export default function DashboardPage({ user, onLogout }) {
 
     if (activeView === 'menu') {
       return <MenuPage />;
+    }
+
+    if (activeView === 'history') {
+      return <HistoryPage />;
+    }
+
+    if (activeView === 'inventory') {
+      return <InventoryPage />;
     }
 
     return (
