@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import HomePage from '@/pages/HomePage';
+import MenuPage from '@/pages/MenuPage';
 
 export default function DashboardPage({ user, onLogout }) {
   const [activeView, setActiveView] = useState('home');
@@ -15,6 +16,10 @@ export default function DashboardPage({ user, onLogout }) {
   const renderContent = () => {
     if (activeView === 'home') {
       return <HomePage />;
+    }
+
+    if (activeView === 'menu') {
+      return <MenuPage />;
     }
 
     return (
