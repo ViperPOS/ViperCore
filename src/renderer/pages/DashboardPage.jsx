@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
 import BillingPage from '@/pages/BillingPage';
-import CustomersPage from '@/pages/CustomersPage';
 import { Button } from '@/components/ui/button';
 import HomePage from '@/pages/HomePage';
 import HistoryPage from '@/pages/HistoryPage';
 import InventoryPage from '@/pages/InventoryPage';
 import MenuPage from '@/pages/MenuPage';
+import OperationsPage from '@/pages/OperationsPage';
 import ReportsPage from '@/pages/ReportsPage';
 import SettingsPage from '@/pages/SettingsPage';
 
@@ -17,7 +17,7 @@ export default function DashboardPage({ user, onLogout }) {
     { key: 'home', label: 'Home' },
     { key: 'menu', label: 'Menu' },
     { key: 'history', label: 'History' },
-    { key: 'customers', label: 'Customers' },
+    { key: 'operations', label: 'Operations' },
     { key: 'inventory', label: 'Inventory' },
     { key: 'reports', label: 'Reports' },
     { key: 'settings', label: 'Settings' },
@@ -40,8 +40,8 @@ export default function DashboardPage({ user, onLogout }) {
       return <HistoryPage />;
     }
 
-    if (activeView === 'customers') {
-      return <CustomersPage />;
+    if (activeView === 'operations') {
+      return <OperationsPage />;
     }
 
     if (activeView === 'inventory') {
