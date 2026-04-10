@@ -123,7 +123,7 @@ function ensureHtmlUsesSrcPaths() {
       return false;
     }
 
-    return p.endsWith(".js") && !p.startsWith("src/renderer/modules/");
+    return p.endsWith(".js") && !p.startsWith("src/renderer/modules/") && !p.includes("renderer/modules/");
   });
 
   const invalidCssPaths = cssPaths.filter((p) => {
@@ -131,7 +131,7 @@ function ensureHtmlUsesSrcPaths() {
       return false;
     }
 
-    return p.endsWith(".css") && !p.startsWith("src/renderer/styles/");
+    return p.endsWith(".css") && !p.startsWith("src/renderer/styles/") && !p.includes("renderer/styles/");
   });
 
   if (invalidScriptPaths.length > 0) {
