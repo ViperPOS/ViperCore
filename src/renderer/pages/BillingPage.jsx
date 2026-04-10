@@ -19,13 +19,19 @@ export default function BillingPage({ user }) {
   const [categories, setCategories] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('');
   const [menuItems, setMenuItems] = useState([]);
+  const [allItems, setAllItems] = useState([]);
+  const [itemSearch, setItemSearch] = useState('');
   const [cart, setCart] = useState([]);
   const [discountPercent, setDiscountPercent] = useState('');
   const [discountAmount, setDiscountAmount] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadingAllItems, setLoadingAllItems] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [printing, setPrinting] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [showHoldBill, setShowHoldBill] = useState(true);
+  const [lastBill, setLastBill] = useState(null);
   const mountedRef = useRef(true);
   const billTimerRef = useRef(null);
 
@@ -71,10 +77,45 @@ export default function BillingPage({ user }) {
     }
   };
 
+  const loadAllItems = async () => {
+    if (allItems.length > 0) return;
+
+    setLoadingAllItems(true);
+    setError('');
+    try {
+      const items = await ipcService.invoke('get-all-food-items');
+      if (!mountedRef.current) return;
+      setAllItems(Array.isArray(items) ? items : []);
+    } catch (fetchError) {
+      console.error('Failed loading all food items:', fetchError);
+      if (mountedRef.current) {
+        setError('Could not load items for search.');
+        setAllItems([]);
+      }
+    } finally {
+      if (mountedRef.current) setLoadingAllItems(false);
+    }
+  };
+
   useEffect(() => {
     mountedRef.current = true;
     loadCategories();
     return () => { mountedRef.current = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const loadUiSettings = async () => {
+      try {
+        const settings = await ipcService.invoke('load-ui-settings');
+        if (!active) return;
+        setShowHoldBill(settings?.showHoldBill !== false);
+      } catch (err) {
+        if (active) setShowHoldBill(true);
+      }
+    };
+    loadUiSettings();
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
@@ -83,10 +124,17 @@ export default function BillingPage({ user }) {
   }, [selectedCategory]);
 
   useEffect(() => {
+    if (itemSearch.trim()) {
+      loadAllItems();
+    }
+  }, [itemSearch]);
+
+  useEffect(() => {
     const onSaved = (payload) => {
       if (billTimerRef.current) { clearTimeout(billTimerRef.current); billTimerRef.current = null; }
       setSaving(false);
-      setMessage(`Bill saved successfully. KOT ${payload?.kot ?? '-'} | Order ${payload?.orderId ?? '-'}`);
+      setMessage(`Bill saved. KOT ${payload?.kot ?? '-'} | Order ${payload?.orderId ?? '-'}`);
+      setLastBill({ kot: payload?.kot, orderId: payload?.orderId, items: [...cart], amount: finalTotal });
       setCart([]);
       setDiscountAmount('');
       setDiscountPercent('');
@@ -96,6 +144,7 @@ export default function BillingPage({ user }) {
       if (billTimerRef.current) { clearTimeout(billTimerRef.current); billTimerRef.current = null; }
       setSaving(false);
       setMessage('Bill held successfully.');
+      setLastBill(null);
       setCart([]);
       setDiscountAmount('');
       setDiscountPercent('');
@@ -107,14 +156,32 @@ export default function BillingPage({ user }) {
       setError(payload?.error || 'Billing action failed.');
     };
 
+    const onPrintSuccess = () => {
+      setPrinting(false);
+      setMessage((prev) => prev + ' Print completed.');
+    };
+
+    const onPrintError = (msg) => {
+      setPrinting(false);
+      setError(msg || 'Print failed.');
+    };
+
     ipcService.on('bill-saved', onSaved);
     ipcService.on('bill-held', onHeld);
     ipcService.on('bill-error', onError);
+    ipcService.on('print-success-with-data', onPrintSuccess);
+    ipcService.on('print-success', onPrintSuccess);
+    ipcService.on('print-kot-success', onPrintSuccess);
+    ipcService.on('print-error', onPrintError);
 
     return () => {
       ipcService.removeListener('bill-saved', onSaved);
       ipcService.removeListener('bill-held', onHeld);
       ipcService.removeListener('bill-error', onError);
+      ipcService.removeListener('print-success-with-data', onPrintSuccess);
+      ipcService.removeListener('print-success', onPrintSuccess);
+      ipcService.removeListener('print-kot-success', onPrintSuccess);
+      ipcService.removeListener('print-error', onPrintError);
     };
   }, []);
 
@@ -154,6 +221,16 @@ export default function BillingPage({ user }) {
   const subtotal = useMemo(() => {
     return cart.reduce((acc, line) => acc + line.price * line.quantity, 0);
   }, [cart]);
+
+  const filteredMenuItems = useMemo(() => {
+    const sourceItems = itemSearch.trim() ? allItems : menuItems;
+    const query = itemSearch.trim().toLowerCase();
+    if (!query) return sourceItems;
+    return sourceItems.filter((item) =>
+      String(item?.fid ?? '').includes(query) ||
+      (item?.fname ?? '').toLowerCase().includes(query)
+    );
+  }, [menuItems, allItems, itemSearch]);
 
   const computedDiscount = useMemo(() => {
     const pct = Number(discountPercent || 0);
@@ -238,15 +315,64 @@ export default function BillingPage({ user }) {
     }, BILL_TIMEOUT_MS);
   };
 
+  const printBill = () => {
+    if (!lastBill) return;
+    setPrinting(true);
+    setError('');
+    ipcService.send('print-bill-only', {
+      billItems: lastBill.items.map((l) => ({ foodId: l.foodId, foodName: l.name, price: l.price, quantity: l.quantity })),
+      totalAmount: lastBill.amount,
+      kot: lastBill.kot,
+      orderId: lastBill.orderId,
+      dateTime: new Date().toLocaleString('en-IN'),
+    });
+  };
+
+  const printKot = () => {
+    if (!lastBill) return;
+    setPrinting(true);
+    setError('');
+    ipcService.send('print-kot-only', {
+      billItems: lastBill.items.map((l) => ({ foodId: l.foodId, foodName: l.name, price: l.price, quantity: l.quantity })),
+      totalAmount: lastBill.amount,
+      kot: lastBill.kot,
+      orderId: lastBill.orderId,
+    });
+  };
+
+  const handleDiscountPercentChange = (value) => {
+    setDiscountPercent(value);
+    if (Number(value || 0) > 0) {
+      setDiscountAmount('');
+    }
+  };
+
+  const handleDiscountAmountChange = (value) => {
+    setDiscountAmount(value);
+    if (Number(value || 0) > 0) {
+      setDiscountPercent('');
+    }
+  };
+
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-[1.5fr_1fr] gap-4">
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 space-y-4">
+    <div className="grid grid-cols-1 xl:grid-cols-[1.5fr_1fr] gap-4 min-h-[68dvh] xl:h-[calc(100dvh-10rem)]">
+      <section className="surface-card rounded-2xl p-4 space-y-4 flex flex-col h-full min-h-0 overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-xl font-black text-slate-900">Billing</h2>
-            <p className="text-sm text-slate-600">Add items to cart and save/hold bill from React.</p>
+            <h2 className="text-xl font-black text-on-light">Billing</h2>
+            <p className="text-sm text-muted">Add items to cart and save/hold bill.</p>
           </div>
           <Button variant="secondary" onClick={loadCategories} disabled={loading || saving}>Refresh</Button>
+        </div>
+
+        <div className="max-w-sm">
+          <label className="text-xs text-muted uppercase mb-1 block">Search Items</label>
+          <input
+            value={itemSearch}
+            onChange={(e) => setItemSearch(e.target.value)}
+            placeholder="Search any item by name or ID"
+            className="surface-input h-10 w-full rounded-lg px-3 text-sm"
+          />
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -256,39 +382,42 @@ export default function BillingPage({ user }) {
               size="sm"
               variant={selectedCategory === category.catname ? 'default' : 'secondary'}
               onClick={() => setSelectedCategory(category.catname ?? '')}
+              disabled={Boolean(itemSearch.trim())}
             >
               {category.catname ?? 'Unknown'}
             </Button>
           ))}
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {loading ? <p className="text-sm text-slate-500 col-span-full">Loading items...</p> : null}
-          {!loading && menuItems.length === 0 ? <p className="text-sm text-slate-500 col-span-full">No items available.</p> : null}
-          {!loading && menuItems.map((item) => (
-            <button
-              key={item.fid ?? item._idx ?? Math.random()}
-              type="button"
-              onClick={() => addToCart(item)}
-              className="rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 p-3 text-left"
-            >
-              <p className="font-semibold text-slate-900">{item.fname ?? 'Unknown'}</p>
-              <p className="text-sm text-slate-600 mt-1">{formatCurrency(item.cost)}</p>
-            </button>
-          ))}
+        <div className="flex-1 min-h-0 overflow-auto pr-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {(loading || loadingAllItems) ? <p className="text-sm text-muted col-span-full">Loading items...</p> : null}
+            {!loading && !loadingAllItems && filteredMenuItems.length === 0 ? <p className="text-sm text-muted col-span-full">No matching items found.</p> : null}
+            {!loading && !loadingAllItems && filteredMenuItems.map((item) => (
+              <button
+                key={item.fid ?? item._idx ?? Math.random()}
+                type="button"
+                onClick={() => addToCart(item)}
+                className="rounded-xl border border-on-light bg-input hover:bg-hover p-3 text-left"
+              >
+                <p className="font-semibold text-on-light">{item.fname ?? 'Unknown'}</p>
+                <p className="text-sm text-muted mt-1">{formatCurrency(item.cost)}</p>
+              </button>
+            ))}
+          </div>
         </div>
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 space-y-4 h-fit">
-        <h3 className="text-lg font-black text-slate-900">Current Bill</h3>
+      <section className="surface-card rounded-2xl p-4 space-y-4 flex flex-col h-full min-h-0 overflow-hidden">
+        <h3 className="text-lg font-black text-on-light">Current Bill</h3>
 
-        <div className="space-y-2 max-h-[340px] overflow-auto pr-1">
-          {cart.length === 0 ? <p className="text-sm text-slate-500">No items added yet.</p> : null}
+        <div className="space-y-2 flex-1 min-h-0 overflow-auto pr-1">
+          {cart.length === 0 ? <p className="text-sm text-muted">No items added yet.</p> : null}
           {cart.map((line) => (
-            <div key={line.foodId} className="rounded-lg border border-slate-200 p-2">
+            <div key={line.foodId} className="rounded-lg border border-on-light p-2">
               <div className="flex items-start justify-between gap-2">
-                <p className="text-sm font-semibold text-slate-900">{line.name}</p>
-                <button type="button" className="text-xs text-red-600" onClick={() => removeLine(line.foodId)}>Remove</button>
+                <p className="text-sm font-semibold text-on-light">{line.name}</p>
+                <button type="button" className="text-xs text-error" onClick={() => removeLine(line.foodId)}>Remove</button>
               </div>
               <div className="mt-2 flex items-center justify-between gap-2">
                 <input
@@ -296,9 +425,9 @@ export default function BillingPage({ user }) {
                   min="1"
                   value={line.quantity}
                   onChange={(e) => setQuantity(line.foodId, e.target.value)}
-                  className="h-8 w-20 rounded border border-slate-300 px-2 text-sm"
+                  className="surface-input h-8 w-20 rounded px-2 text-sm"
                 />
-                <p className="text-sm font-semibold">{formatCurrency(line.price * line.quantity)}</p>
+                <p className="text-sm font-semibold text-on-light">{formatCurrency(line.price * line.quantity)}</p>
               </div>
             </div>
           ))}
@@ -306,39 +435,49 @@ export default function BillingPage({ user }) {
 
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="text-xs text-slate-500 uppercase">Discount %</label>
+            <label className="text-xs text-muted uppercase mb-1 block">Discount %</label>
             <input
               type="number"
               min="0"
               value={discountPercent}
-              onChange={(e) => setDiscountPercent(e.target.value)}
-              className="h-9 w-full rounded border border-slate-300 px-2 text-sm"
+              onChange={(e) => handleDiscountPercentChange(e.target.value)}
+              disabled={Number(discountAmount || 0) > 0}
+              className="surface-input h-9 w-full rounded px-2 text-sm"
             />
           </div>
           <div>
-            <label className="text-xs text-slate-500 uppercase">Discount Amt</label>
+            <label className="text-xs text-muted uppercase mb-1 block">Discount Amt</label>
             <input
               type="number"
               min="0"
               value={discountAmount}
-              onChange={(e) => setDiscountAmount(e.target.value)}
-              className="h-9 w-full rounded border border-slate-300 px-2 text-sm"
+              onChange={(e) => handleDiscountAmountChange(e.target.value)}
+              disabled={Number(discountPercent || 0) > 0}
+              className="surface-input h-9 w-full rounded px-2 text-sm"
             />
           </div>
         </div>
 
-        <div className="rounded-lg bg-slate-50 border border-slate-200 p-3 text-sm space-y-1">
-          <div className="flex justify-between"><span>Subtotal</span><span>{formatCurrency(subtotal)}</span></div>
-          <div className="flex justify-between"><span>Discount</span><span>{formatCurrency(computedDiscount.value)}</span></div>
-          <div className="flex justify-between font-black text-base"><span>Total</span><span>{formatCurrency(finalTotal)}</span></div>
+        <div className="rounded-lg bg-input border border-on-light p-3 text-sm space-y-1">
+          <div className="flex justify-between"><span className="text-on-light">Subtotal</span><span className="text-on-light">{formatCurrency(subtotal)}</span></div>
+          <div className="flex justify-between"><span className="text-on-light">Discount</span><span className="text-on-light">{formatCurrency(computedDiscount.value)}</span></div>
+          <div className="flex justify-between font-black text-base"><span className="text-on-light">Total</span><span className="text-on-light">{formatCurrency(finalTotal)}</span></div>
         </div>
 
-        {computedDiscount.invalid ? <p className="text-xs text-red-600">{computedDiscount.reason}</p> : null}
-        {error ? <p className="text-xs text-red-600">{error}</p> : null}
-        {message ? <p className="text-xs text-emerald-700">{message}</p> : null}
+        {computedDiscount.invalid ? <p className="text-xs text-error">{computedDiscount.reason}</p> : null}
+        {error ? <p className="text-xs text-error">{error}</p> : null}
+        {message ? <p className="text-xs text-success">{message}</p> : null}
 
-        <div className="grid grid-cols-2 gap-2">
-          <Button variant="secondary" onClick={holdBill} disabled={saving || cart.length === 0}>Hold Bill</Button>
+        {lastBill && (
+          <div className="flex gap-2">
+            <Button size="sm" variant="secondary" onClick={printBill} disabled={printing}>Print Bill</Button>
+            <Button size="sm" variant="secondary" onClick={printKot} disabled={printing}>Print KOT</Button>
+            <Button size="sm" variant="ghost" onClick={() => setLastBill(null)}>Dismiss</Button>
+          </div>
+        )}
+
+        <div className={`grid gap-2 ${showHoldBill ? 'grid-cols-2' : 'grid-cols-1'}`}>
+          {showHoldBill ? <Button variant="secondary" onClick={holdBill} disabled={saving || cart.length === 0}>Hold Bill</Button> : null}
           <Button onClick={saveBill} disabled={saving || cart.length === 0}>{saving ? 'Processing...' : 'Save Bill'}</Button>
         </div>
       </section>

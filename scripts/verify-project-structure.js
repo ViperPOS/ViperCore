@@ -58,6 +58,12 @@ function ensureRequiredPathsExist() {
   if (missing.length > 0) {
     fail(`Missing required files:\n- ${missing.join("\n- ")}`);
   }
+
+  // Ensure legacy modules directory was properly removed
+  const legacyModules = path.join(projectRoot, "src", "renderer", "modules");
+  if (fs.existsSync(legacyModules)) {
+    fail("Legacy src/renderer/modules/ directory should have been removed.");
+  }
 }
 
 function ensureRootIsClean() {
@@ -65,18 +71,6 @@ function ensureRootIsClean() {
   const rootFiles = new Set(
     rootEntries.filter((entry) => entry.isFile()).map((entry) => entry.name)
   );
-
-  const modulesDir = path.join(projectRoot, "src", "renderer", "modules");
-  if (fs.existsSync(modulesDir)) {
-    const moduleFiles = fs
-      .readdirSync(modulesDir)
-      .filter((name) => name.endsWith(".js"));
-
-    const duplicateRootModules = moduleFiles.filter((name) => rootFiles.has(name));
-    if (duplicateRootModules.length > 0) {
-      fail(`Root contains moved renderer modules:\n- ${duplicateRootModules.join("\n- ")}`);
-    }
-  }
 
   const forbiddenPresent = forbiddenRootFiles.filter((name) => rootFiles.has(name));
   if (forbiddenPresent.length > 0) {

@@ -18,13 +18,11 @@ console.log(`Resources path: ${resourcesPath}`);
 
 // === React + Vite App Loading ===
 function getMainWindowUrl() {
-    // Explicit dev server URL (used by npm run dev)
     const devServerUrl = process.env.ELECTRON_RENDERER_URL;
     if (devServerUrl) {
         return devServerUrl;
     }
 
-    // Production build output (used by packaged app and local built app)
     const distIndexPath = app.isPackaged
         ? path.join(process.resourcesPath, 'dist', 'index.html')
         : path.join(basePath, 'dist', 'index.html');
@@ -33,11 +31,9 @@ function getMainWindowUrl() {
         return `file://${distIndexPath}`;
     }
 
-    // Safe fallback so npm start still opens the app before React pages are migrated
-    return `file://${path.join(publicPath, 'login.html')}`;
+    console.error('dist/index.html not found. Run "npm run build" first.');
+    return '';
 }
-
-const loginHtmlPath = path.join(publicPath, "login.html");
 
 // Prevent multiple app instances from competing for the same SQLite file.
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
@@ -50,8 +46,7 @@ const userDataPath = app.getPath('userData');
 const userDbPath = path.join(userDataPath, 'LC.db');
 const userReceiptFormatPath = path.join(userDataPath, 'receiptFormat.json');
 const userBusinessInfoPath = path.join(userDataPath, 'businessInfo.json');
-const userSwitchesPath = path.join(userDataPath, 'switches.json');
-const userMiscellaneousPath = path.join(userDataPath, 'Miscellaneous.json');
+const userUiSettingsPath = path.join(userDataPath, 'uiSettings.json');
 
 // Function to copy resources to user data on first launch
 async function copyResourcesToUserData() {
@@ -71,8 +66,7 @@ async function copyResourcesToUserData() {
             { source: path.join(resourcesPath, 'LC.db'), dest: userDbPath },
             { source: path.join(resourcesPath, 'receiptFormat.json'), dest: userReceiptFormatPath },
             { source: path.join(resourcesPath, 'businessInfo.json'), dest: userBusinessInfoPath },
-            { source: path.join(resourcesPath, 'switches.json'), dest: userSwitchesPath },
-            { source: path.join(resourcesPath, 'Miscellaneous.json'), dest: userMiscellaneousPath }
+            { source: path.join(resourcesPath, 'uiSettings.json'), dest: userUiSettingsPath }
         ];
         
         for (const file of filesToCopy) {
@@ -310,13 +304,24 @@ function createMainWindow() {
     show: false,
     fullscreen: true,
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
-            devTools: true,
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, '..', 'preload.js'),
+      devTools: true,
     },
   });
 
   Menu.setApplicationMenu(null);
+
+  // Set CSP header via session to suppress the security warning
+  mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': ["default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';"],
+      },
+    });
+  });
 
   // Enable developer tools with F12 key
   mainWindow.webContents.on('before-input-event', (event, input) => {
@@ -3122,108 +3127,6 @@ ipcMain.on('get-year-wise-data', (event) => {
 });
 //---------------------------------------HISTORY TAB ENDS HERE--------------------------------------------
 
-//--------------------------------------- INVENTORY TAB STARTS HERE--------------------------------------------
-// Inventory database operations
-// Get Inventory List
-ipcMain.on("get-inventory-list", (event) => {
-    const query = "SELECT inv_no, inv_item, current_stock FROM Inventory ORDER BY inv_item COLLATE NOCASE";
-    
-    db.all(query, [], (err, rows) => {
-        if (err) {
-            console.error("Error fetching inventory:", err.message);
-            event.reply("inventory-list-response", { success: false, inventory: [] });
-            return;
-        }
-
-        event.reply("inventory-list-response", { success: true, inventory: rows });
-    });
-});
-
-// Delete Inventory Item
-ipcMain.on("delete-inventory-item", (event, inv_no) => {
-    const query = "DELETE FROM Inventory WHERE inv_no = ?";
-    
-    db.run(query, [inv_no], function (err) {
-        if (err) {
-            console.error("Error deleting inventory item:", err.message);
-            return;
-        }
-
-        console.log(`Inventory Item ID ${inv_no} deleted successfully.`);
-        event.reply("inventory-item-deleted"); // Notify renderer to refresh UI
-    });
-});
-
-// Add New Inventory Item
-ipcMain.on("add-inventory-item", (event, itemData) => {
-    const { inv_item, current_stock } = itemData;
-
-    const sql = "INSERT INTO Inventory (inv_item, current_stock) VALUES (?, ?)";
-    db.run(sql, [inv_item, current_stock], function (err) {
-        if (err) {
-            console.error("Error adding inventory item:", err.message);
-            return;
-        }
-
-        event.sender.send("inventory-item-added");
-
-        if (mainWindow) {
-            mainWindow.webContents.send("inventory-item-updated");
-        }
-    });
-});
-
-// Update Inventory Item
-ipcMain.on("update-inventory-item", (event, updatedData) => {
-    const query = "UPDATE Inventory SET inv_item = ?, current_stock = ? WHERE inv_no = ?";
-
-    db.run(query, [updatedData.inv_item, updatedData.current_stock, updatedData.inv_no], function (err) {
-        if (err) {
-            console.error("Error updating inventory item:", err.message);
-            return;
-        }
-
-        console.log(`Inventory Item ID ${updatedData.inv_no} updated successfully.`);
-        event.sender.send("inventory-item-updated");
-    });
-});
-
-// Restock Inventory Item
-ipcMain.on("restock-inventory-item", (event, restockData) => {
-    const { inv_no, quantity } = restockData;
-    
-    // First get current stock
-    db.get("SELECT current_stock FROM Inventory WHERE inv_no = ?", [inv_no], (err, row) => {
-        if (err) {
-            console.error("Error fetching current stock:", err.message);
-            return;
-        }
-
-        if (row) {
-            const newStock = row.current_stock + quantity;
-            db.run("UPDATE Inventory SET current_stock = ? WHERE inv_no = ?", 
-                [newStock, inv_no], 
-                function(err) {
-                    if (err) {
-                        console.error("Error updating inventory stock:", err.message);
-                        return;
-                    }
-
-                    console.log(`Inventory Item ID ${inv_no} restocked (added ${quantity}). New stock: ${newStock}`);
-                    event.sender.send("inventory-item-restocked");
-                }
-            );
-        }
-    });
-});
-
-// Refresh Inventory List
-ipcMain.on("refresh-inventory", (event) => {
-    if (mainWindow) {
-        mainWindow.webContents.send("inventory-item-updated");
-    }
-});
-//---------------------------------------- INVENTORY TAB ENDS HERE --------------------------------------------
 //---------------------------------------SETTINGS TAB STARTS HERE--------------------------------------------
 
 ipcMain.on("get-users", (event) => {
@@ -3408,13 +3311,10 @@ ipcMain.handle("get-menu-items", async () => {
             SELECT 
                 f.fid, f.fname, f.category, f.cost, 
                 f.sgst, f.cgst, f.veg, f.is_on, f.active,
-                f.depend_inv,
                 c.catname AS category_name
             FROM FoodItem f
             JOIN Category c ON f.category = c.catid;
         `;
-
-        const inventoryQuery = `SELECT inv_no, inv_item FROM Inventory;`;
 
         // Wrap in try-catch and improve error messages
         const foodItems = await new Promise((resolve, reject) => {
@@ -3428,35 +3328,8 @@ ipcMain.handle("get-menu-items", async () => {
             });
         });
 
-        const inventoryItems = await new Promise((resolve, reject) => {
-            db.all(inventoryQuery, (err, rows) => {
-                if (err) {
-                    console.error("[Inventory Query] SQL Error:", err.message);
-                    reject(new Error(`Inventory query failed: ${err.message}`));
-                } else {
-                    resolve(rows);
-                }
-            });
-        });
-
-        const invMap = Object.fromEntries(
-            inventoryItems.map(item => [item.inv_no, item.inv_item])
-        );
-
-        const enrichedFoodItems = foodItems.map(item => {
-            const dependInvIds = (item.depend_inv || "")
-                .split(",")
-                .map(id => id.trim())
-                .filter(id => id && !isNaN(id));
-            const dependNames = dependInvIds.map(id => invMap[id]).filter(Boolean);
-            return {
-                ...item,
-                depend_inv_names: dependNames.join(", ") || null
-            };
-        });
-
-        console.log("✅ Successfully fetched and enriched food items:", enrichedFoodItems.length);
-        return enrichedFoodItems;
+        console.log("✅ Successfully fetched food items:", foodItems.length);
+        return foodItems;
 
     } catch (err) {
         console.error("❌ Error in get-menu-items handler:", err);
@@ -3464,22 +3337,6 @@ ipcMain.handle("get-menu-items", async () => {
     }
 });
 
-ipcMain.handle('get-all-inventory-items', async () => {
-    try {
-        const query = `SELECT inv_no, inv_item FROM Inventory ORDER BY inv_item ASC`;
-        const items = await new Promise((resolve, reject) => {
-            db.all(query, (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-
-        return items;
-    } catch (error) {
-        console.error("Error fetching inventory items:", error);
-        return []; // return empty array on error
-    }
-});
 // Toggle menu items - DAILY TOGGLE ON/OFF:
 ipcMain.handle("toggle-menu-item", async (event, fid) => {
     try {
@@ -3575,14 +3432,14 @@ ipcMain.handle("delete-menu-item", async (event, fid) => {
     }
 });
 //Edit Menu ITems
-ipcMain.handle("update-food-item", async (event, { fid, fname, category, cost, sgst, cgst, veg, depend_inv }) => {
+ipcMain.handle("update-food-item", async (event, { fid, fname, category, cost, sgst, cgst, veg }) => {
     try {
         const query = `
             UPDATE FoodItem 
-            SET fname = ?, cost = ?, category = ?, sgst = ?, cgst = ?, veg = ?, depend_inv = ?
+            SET fname = ?, cost = ?, category = ?, sgst = ?, cgst = ?, veg = ?
             WHERE fid = ?
         `;
-        await db.run(query, [fname, cost, category, sgst, cgst, veg, depend_inv, fid]);
+        await db.run(query, [fname, cost, category, sgst, cgst, veg, fid]);
         return { success: true };
     } catch (error) {
         console.error("Error updating food item:", error);
@@ -3616,8 +3473,8 @@ ipcMain.handle("get-categories-for-additem", async () => {
 ipcMain.handle("add-food-item", async (event, item) => {
     return new Promise((resolve, reject) => {
         db.run(
-            `INSERT INTO FoodItem (fname, category, cost, sgst, cgst, tax, active, is_on, veg, depend_inv)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO FoodItem (fname, category, cost, sgst, cgst, tax, active, is_on, veg)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 item.fname,
                 item.category,
@@ -3627,8 +3484,7 @@ ipcMain.handle("add-food-item", async (event, item) => {
                 item.tax,
                 item.active,
                 item.is_on,
-                item.veg,
-                item.depend_inv || "" // Fallback to empty string if undefined
+                item.veg
             ],
             function (err) {
                 if (err) {
@@ -3710,170 +3566,6 @@ ipcMain.handle("get-all-food-items", async () => {
             }
         });
     });
-});
-
-// Get frequent items based on the miscellaneous configuration
-ipcMain.handle("get-frequent-items", async () => {
-    return new Promise(async (resolve, reject) => {
-        try {
-            // Load frequent items list from miscellaneous data
-            const miscData = await new Promise((resolve, reject) => {
-                const dataPath = getFilePath('Miscellaneous.json');
-                fs.readFile(dataPath, 'utf-8', (err, data) => {
-                    if (err) {
-                        resolve({ frequentItems: [] }); // Default if file doesn't exist
-                    } else {
-                        try {
-                            resolve(JSON.parse(data));
-                        } catch (parseErr) {
-                            resolve({ frequentItems: [] }); // Default if parsing fails
-                        }
-                    }
-                });
-            });
-
-            if (!miscData.frequentItems || miscData.frequentItems.length === 0) {
-                resolve([]);
-                return;
-            }
-
-            // Get food items that match the frequent items list
-            const placeholders = miscData.frequentItems.map(() => '?').join(',');
-            const query = `
-                SELECT f.fid, f.fname, f.cost, f.veg, f.category 
-                FROM FoodItem f 
-                JOIN Category c ON f.category = c.catid
-                WHERE f.active = 1 
-                AND f.is_on = 1 
-                AND c.active = 1
-                AND f.fid IN (${placeholders})
-                ORDER BY f.fname;
-            `;
-
-            db.all(query, miscData.frequentItems, (err, rows) => {
-                if (err) {
-                    reject(err);
-                } else {
-                    resolve(rows);
-                }
-            });
-        } catch (error) {
-            reject(error);
-        }
-    });
-});
-
-// Fetch inventory items for a given food item
-ipcMain.handle("get-inventory-for-food", async (event, foodId) => {
-    const query = `
-        SELECT depend_inv
-        FROM FoodItem
-        WHERE fid = ?;
-    `;
-
-    try {
-        // Get the depend_inv value (comma-separated inventory IDs)
-        const rows = await new Promise((resolve, reject) => {
-            db.all(query, [foodId], (err, rows) => {
-                if (err) {
-                    reject(err);
-                } else {
-                    resolve(rows);
-                }
-            });
-        });
-
-        if (rows.length === 0 || !rows[0].depend_inv) {
-            return []; // No inventory dependencies for this food item
-        }
-
-        // Parse the depend_inv field to get inventory IDs
-        const inventoryIds = rows[0].depend_inv.split(',').map(id => id.trim());
-
-        // Now fetch the inventory details for each inventory ID
-        const inventoryQuery = `
-            SELECT inv_no, inv_item, current_stock
-            FROM Inventory
-            WHERE inv_no IN (${inventoryIds.map(() => '?').join(', ')});
-        `;
-        
-        const inventoryItems = await new Promise((resolve, reject) => {
-            db.all(inventoryQuery, inventoryIds, (err, rows) => {
-                if (err) {
-                    reject(err);
-                } else {
-                    resolve(rows);
-                }
-            });
-        });
-
-        return inventoryItems; // Return the inventory details
-    } catch (err) {
-        console.error("Error fetching inventory for food item:", err);
-        return [];
-    }
-});
-
-
-// Deduct stock for an inventory item (stock will not go below zero)
-ipcMain.handle("deduct-inventory-stock", async (event, { foodId, quantity }) => {
-    const getDependInvQuery = `
-        SELECT depend_inv FROM FoodItem WHERE fid = ?;
-    `;
-
-    try {
-        // Step 1: Fetch the depend_inv (comma-separated list of inventory IDs) for the given food item
-        const dependInvResult = await new Promise((resolve, reject) => {
-            db.get(getDependInvQuery, [foodId], (err, row) => {
-                if (err) {
-                    reject(err);
-                } else {
-                    resolve(row);
-                }
-            });
-        });
-
-        // If depend_inv is null or empty, no dependencies to process
-        if (!dependInvResult || !dependInvResult.depend_inv) {
-            return { success: true };
-        }
-
-        // Step 2: Split the depend_inv string into an array of inventory IDs
-        const dependInvIds = dependInvResult.depend_inv.split(',').map(id => id.trim());
-
-        // Step 3: Loop through each inventory item in depend_inv and update their stock
-        for (let invIdStr of dependInvIds) {
-            const invIdInt = parseInt(invIdStr); // Ensure we have a valid integer inventory ID
-
-            if (isNaN(invIdInt)) continue; // Skip invalid inventory IDs
-
-            const query = `
-                UPDATE Inventory
-                SET current_stock = CASE
-                    WHEN current_stock - ? < 0 THEN 0
-                    ELSE current_stock - ?
-                END
-                WHERE inv_no = ?;
-            `;
-
-            // Deduct stock for each item in the depend_inv list
-            await new Promise((resolve, reject) => {
-                db.run(query, [quantity, quantity, invIdInt], function(err) {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        resolve({ success: true });
-                    }
-                });
-            });
-        }
-
-        return { success: true };
-
-    } catch (err) {
-        console.error("Error deducting inventory:", err);
-        return { success: false, message: "An error occurred while deducting stock." };
-    }
 });
 
 //-0--------------------HOME TAB ENDS HERE--------------------------------------------------------------------------------
@@ -3990,29 +3682,6 @@ ipcMain.handle("get-food-items", async (event, categoryName) => {
 
 // ADD FOOD ITEM IN MENU APP
 // Fetch categories for dropdown
-let addItemWindow;
-ipcMain.on("open-add-item-window", () => {
-    if (!addItemWindow) {
-        addItemWindow = new BrowserWindow({
-            width: 500,
-            height: 600,
-            modal: true, // Keeps it on top
-            parent: mainWindow, // Assuming mainWindow is your main app window
-            webPreferences: {
-                nodeIntegration: true,
-                contextIsolation: false // Ensure IPC works properly
-            }
-        });
-
-        addItemWindow.loadFile(path.join(publicPath, "AddItem.html"));
-
-        addItemWindow.on("closed", () => {
-            addItemWindow = null;
-        });
-    }
-});
-
-
 //refresh menu
 // In main.js
 
@@ -4059,66 +3728,36 @@ ipcMain.handle('load-business-info', async () => {
     }
 });
 
-// ------------------------------- SWITCHES SECTION STARTS HERE ------------------------
-ipcMain.handle('load-switches', async () => {
+// ------------------------------- UI SETTINGS SECTION STARTS HERE ------------------------
+ipcMain.handle('load-ui-settings', async () => {
     try {
-        const dataPath = getFilePath('switches.json');
+        const dataPath = getFilePath('uiSettings.json');
         const fileData = await fs.promises.readFile(dataPath, 'utf-8');
-        return JSON.parse(fileData);
-    } catch (err) {
-        console.error('Failed to load switches:', err);
-        // Return default switches if file doesn't exist
+        const parsed = JSON.parse(fileData);
         return {
-            showAllButton: true,
-            showFrequentButton: true
+            showHoldBill: parsed?.showHoldBill !== false,
+        };
+    } catch (err) {
+        return {
+            showHoldBill: true,
         };
     }
 });
 
-ipcMain.on('save-switches', (event, switchesData) => {
-    const savePath = getFilePath('switches.json');
-    fs.writeFile(savePath, JSON.stringify(switchesData, null, 2), 'utf-8', (err) => {
-        if (err) {
-            console.error('Failed to save switches:', err);
-            event.reply('save-switches-response', { success: false, message: err.message });
-        } else {
-            console.log('Switches saved successfully');
-            event.reply('save-switches-response', { success: true });
-        }
-    });
-});
-
-// ------------------------------- SWITCHES SECTION ENDS HERE ------------------------
-
-// ------------------------------- MISCELLANEOUS SECTION STARTS HERE ------------------------
-ipcMain.handle('load-miscellaneous', async () => {
+ipcMain.handle('save-ui-settings', async (event, settings) => {
     try {
-        const dataPath = getFilePath('Miscellaneous.json');
-        const fileData = await fs.promises.readFile(dataPath, 'utf-8');
-        return JSON.parse(fileData);
-    } catch (err) {
-        console.error('Failed to load miscellaneous data:', err);
-        // Return default structure if file doesn't exist
-        return {
-            frequentItems: []
+        const dataPath = path.join(userDataPath, 'uiSettings.json');
+        const nextSettings = {
+            showHoldBill: settings?.showHoldBill !== false,
         };
+        await fs.promises.writeFile(dataPath, JSON.stringify(nextSettings, null, 2), 'utf-8');
+        return { success: true };
+    } catch (err) {
+        console.error('Failed to save UI settings:', err);
+        return { success: false, message: err.message };
     }
 });
-
-ipcMain.on('save-miscellaneous', (event, miscData) => {
-    const savePath = getFilePath('Miscellaneous.json');
-    fs.writeFile(savePath, JSON.stringify(miscData, null, 2), 'utf-8', (err) => {
-        if (err) {
-            console.error('Failed to save miscellaneous data:', err);
-            event.reply('save-miscellaneous-response', { success: false, message: err.message });
-        } else {
-            console.log('Miscellaneous data saved successfully');
-            event.reply('save-miscellaneous-response', { success: true });
-        }
-    });
-});
-
-// ------------------------------- MISCELLANEOUS SECTION ENDS HERE ------------------------
+// ------------------------------- UI SETTINGS SECTION ENDS HERE ------------------------
 
 // ------------------------------- BUSINESS INFO SECTION ENDS HERE ------------------------
 //----------------------------------- BACKUP AND RESTORE SECTION STARTS HERE -------------------
@@ -4207,7 +3846,7 @@ function initializeSchema() {
                 password_hash TEXT
       )`);
   
-      db.run(`CREATE TABLE IF NOT EXISTS FoodItem (
+            db.run(`CREATE TABLE IF NOT EXISTS FoodItem (
         fid INTEGER PRIMARY KEY AUTOINCREMENT,
         fname TEXT NOT NULL,
         category INTEGER NOT NULL,
@@ -4217,8 +3856,7 @@ function initializeSchema() {
         tax NUMERIC NOT NULL DEFAULT 0,
         active INTEGER NOT NULL DEFAULT 1,
         is_on INTEGER NOT NULL DEFAULT 1,
-        veg INTEGER NOT NULL DEFAULT 0,
-        depend_inv TEXT DEFAULT NULL,
+                veg INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (category) REFERENCES Category(catid)
       )`);
   
@@ -4285,7 +3923,7 @@ function initializeSchema() {
         FOREIGN KEY (cashier) REFERENCES User(userid)
       )`);
   
-      db.run(`CREATE TABLE IF NOT EXISTS DeletedOrderDetails (
+            db.run(`CREATE TABLE IF NOT EXISTS DeletedOrderDetails (
         orderid INTEGER NOT NULL,
         foodid INTEGER NOT NULL,
         quantity INTEGER NOT NULL,
@@ -4294,14 +3932,9 @@ function initializeSchema() {
         FOREIGN KEY (foodid) REFERENCES FoodItem(fid)
       )`);
   
-      db.run(`CREATE TABLE IF NOT EXISTS Inventory (
-        inv_no INTEGER PRIMARY KEY AUTOINCREMENT,
-        inv_item TEXT NOT NULL,
-        current_stock INTEGER NOT NULL
-      )`);
-  
             db.run(`DROP TABLE IF EXISTS OnlineOrderItems`);
             db.run(`DROP TABLE IF EXISTS OnlineOrders`);
+                        db.run(`DROP TABLE IF EXISTS Inventory`);
 
       db.run(`CREATE TABLE IF NOT EXISTS "Miscellaneous" (
         "MiscNo"	INTEGER NOT NULL,
@@ -4321,6 +3954,41 @@ function initializeSchema() {
                         console.error("Error preparing local user password schema:", schemaErr);
                     });
         });
+
+                db.all(`PRAGMA table_info(FoodItem)`, [], (err, columns) => {
+                    if (err) {
+                        console.error('Error inspecting FoodItem schema:', err);
+                        return;
+                    }
+
+                    const hasLegacyDependInv = Array.isArray(columns) && columns.some((column) => column.name === 'depend_inv');
+                    if (!hasLegacyDependInv) {
+                        return;
+                    }
+
+                    db.serialize(() => {
+                        db.run('PRAGMA foreign_keys = OFF');
+                        db.run(`CREATE TABLE IF NOT EXISTS FoodItem_new (
+                            fid INTEGER PRIMARY KEY AUTOINCREMENT,
+                            fname TEXT NOT NULL,
+                            category INTEGER NOT NULL,
+                            cost NUMERIC NOT NULL,
+                            sgst NUMERIC NOT NULL DEFAULT 0,
+                            cgst NUMERIC NOT NULL DEFAULT 0,
+                            tax NUMERIC NOT NULL DEFAULT 0,
+                            active INTEGER NOT NULL DEFAULT 1,
+                            is_on INTEGER NOT NULL DEFAULT 1,
+                            veg INTEGER NOT NULL DEFAULT 0,
+                            FOREIGN KEY (category) REFERENCES Category(catid)
+                        )`);
+                        db.run(`INSERT INTO FoodItem_new (fid, fname, category, cost, sgst, cgst, tax, active, is_on, veg)
+                                        SELECT fid, fname, category, cost, sgst, cgst, tax, active, is_on, veg
+                                        FROM FoodItem`);
+                        db.run(`DROP TABLE FoodItem`);
+                        db.run(`ALTER TABLE FoodItem_new RENAME TO FoodItem`);
+                        db.run('PRAGMA foreign_keys = ON');
+                    });
+                });
 
       console.log("📦 Database schema ensured (tables created if missing).");
     });
@@ -4422,56 +4090,3 @@ ipcMain.on("get-all-cashiers", (event) => {
 
 //-------------------------------- Search Order (in History Section) Ends Here-------------------------------------
 
-//------------------------------- Master Password Implementation Starts Here ----------------------------------------
-ipcMain.handle('get-master-password', async () => {
-    return new Promise((resolve, reject) => {
-        console.log('Retrieving master password from database...');
-        db.get("SELECT ItemValue FROM Miscellaneous WHERE ItemName = 'master_password'", [], (err, row) => {
-            if (err) {
-                console.error('Database error when getting password:', err);
-                reject("Failed to retrieve master password: " + err.message);
-            } else {
-                console.log('Master password query result:', row ? 'Password found' : 'No password found');
-                resolve(row ? row.ItemValue : null);
-            }
-        });
-    });
-});
-ipcMain.handle('set-master-password', async (event, newPassword) => {
-    return new Promise((resolve, reject) => {
-        console.log('Setting master password in database...');
-        
-        // First check if master_password entry exists
-        db.get("SELECT MiscNo FROM Miscellaneous WHERE ItemName = 'master_password'", [], (err, row) => {
-            if (err) {
-                console.error('Database error when checking for existing password:', err);
-                reject("Failed to check existing master password: " + err.message);
-                return;
-            }
-            
-            if (row) {
-                // Update existing entry
-                db.run("UPDATE Miscellaneous SET ItemValue = ? WHERE ItemName = 'master_password'", [newPassword], function(err) {
-                    if (err) {
-                        console.error('Database error when updating password:', err);
-                        reject("Failed to update master password: " + err.message);
-                    } else {
-                        console.log('Master password updated successfully. Changes:', this.changes);
-                        resolve();
-                    }
-                });
-            } else {
-                // Insert new entry
-                db.run("INSERT INTO Miscellaneous (ItemName, ItemValue) VALUES ('master_password', ?)", [newPassword], function(err) {
-                    if (err) {
-                        console.error('Database error when inserting password:', err);
-                        reject("Failed to insert master password: " + err.message);
-                    } else {
-                        console.log('Master password inserted successfully. Changes:', this.changes);
-                        resolve();
-                    }
-                });
-            }
-        });
-    });
-});

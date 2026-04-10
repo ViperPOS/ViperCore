@@ -2,13 +2,120 @@
 @tailwind components;
 @tailwind utilities;
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  html, body, #root {
+    width: 100%;
+    height: 100%;
+  }
+
+  html, body {
+    background-color: #FFFFFF;
+    color: #000000;
+  }
 }
 
-html, body, #root {
-  width: 100%;
-  height: 100%;
+/* ── Theme Variables ─────────────────────────────── */
+@layer base {
+  :root {
+    --color-a: #000000;
+    --color-b: #111111;
+    --color-c: #6B6B6B;
+    --color-d: #FFFFFF;
+    --color-e: #E6E6E6;
+
+    --bg-app:     #FFFFFF;
+    --bg-sidebar: #000000;
+    --bg-card:    #FFFFFF;
+    --bg-input:   #FFFFFF;
+    --bg-hover:   rgba(0, 0, 0, 0.06);
+    --bg-active:  rgba(0, 0, 0, 0.12);
+
+    --text-on-dark:  #FFFFFF;
+    --text-on-light: #000000;
+    --text-muted:    #6B6B6B;
+
+    --border-on-dark:  rgba(255, 255, 255, 0.28);
+    --border-on-light: #000000;
+    --border-subtle:   rgba(0, 0, 0, 0.14);
+
+    --btn-primary-bg:     #000000;
+    --btn-primary-text:   #FFFFFF;
+    --btn-primary-hover:   #111111;
+
+    --btn-secondary-bg:     #FFFFFF;
+    --btn-secondary-text:   #000000;
+    --btn-secondary-border: #000000;
+    --btn-secondary-hover:  #E6E6E6;
+
+    --btn-ghost-bg:   transparent;
+    --btn-ghost-text: #000000;
+    --btn-ghost-border: #000000;
+    --btn-ghost-hover: #E6E6E6;
+
+    --btn-ghost-dark-bg:   transparent;
+    --btn-ghost-dark-text: #FFFFFF;
+    --btn-ghost-dark-border: rgba(255, 255, 255, 0.28);
+    --btn-ghost-dark-hover: rgba(255, 255, 255, 0.12);
+
+    --status-error:   #000000;
+    --status-success: #000000;
+    --status-warning: #6B6B6B;
+  }
+}
+
+/* ── Utility Classes ─────────────────────────────── */
+@layer utilities {
+  .bg-app     { background-color: var(--bg-app); }
+  .bg-sidebar { background-color: var(--bg-sidebar); }
+  .bg-card    { background-color: var(--bg-card); }
+  .bg-input   { background-color: var(--bg-input); }
+  .bg-hover   { background-color: var(--bg-hover); }
+  .bg-active  { background-color: var(--bg-active); }
+
+  .text-on-dark  { color: var(--text-on-dark); }
+  .text-on-light { color: var(--text-on-light); }
+  .text-muted    { color: var(--text-muted); }
+  .text-error    { color: var(--status-error); }
+  .text-success  { color: var(--status-success); }
+
+  .border-on-dark  { border-color: var(--border-on-dark); }
+  .border-on-light { border-color: var(--border-on-light); }
+  .border-subtle   { border-color: var(--border-subtle); }
+
+  .surface-card {
+    background-color: var(--bg-card);
+    color: var(--text-on-light);
+    border: 1px solid var(--border-on-light);
+  }
+
+  .surface-input {
+    background-color: var(--bg-input);
+    color: var(--text-on-light);
+    border: 1px solid var(--border-on-light);
+  }
+
+  .text-surface       { color: var(--text-on-light); }
+  .text-surface-muted { color: var(--text-muted); }
+
+  .divide-on-dark  > * + * { border-color: var(--border-on-dark); }
+  .divide-on-light > * + * { border-color: var(--border-subtle); }
+}
+
+/* ── Scrollbar Styling ───────────────────────────── */
+@layer base {
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.24);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.45);
+  }
 }

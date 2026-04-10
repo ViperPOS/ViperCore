@@ -7,14 +7,19 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: 'bg-[#0f766e] text-white hover:bg-[#115e59] focus-visible:ring-[#0f766e]',
-        secondary: 'bg-white text-[#0f172a] border border-[#cbd5e1] hover:bg-[#f8fafc] focus-visible:ring-[#64748b]',
-        ghost: 'text-[#0f172a] hover:bg-[#e2e8f0] focus-visible:ring-[#64748b]',
+        default:
+          'bg-[var(--btn-primary-bg)] text-[var(--btn-primary-text)] hover:bg-[var(--btn-primary-hover)] border border-transparent focus-visible:ring-[var(--btn-primary-bg)]',
+        secondary:
+          'bg-[var(--btn-secondary-bg)] text-[var(--btn-secondary-text)] border border-[var(--btn-secondary-border)] hover:bg-[var(--btn-secondary-hover)] focus-visible:ring-[var(--btn-secondary-bg)]',
+        ghost:
+          'bg-[var(--btn-ghost-bg)] text-[var(--btn-ghost-text)] border border-[var(--btn-ghost-border)] hover:bg-[var(--btn-ghost-hover)] focus-visible:ring-[var(--btn-ghost-bg)]',
+        'ghost-dark':
+          'bg-[var(--btn-ghost-dark-bg)] text-[var(--btn-ghost-dark-text)] border border-[var(--btn-ghost-dark-border)] hover:bg-[var(--btn-ghost-dark-hover)] focus-visible:ring-[var(--btn-ghost-dark-bg)]',
       },
       size: {
         default: 'h-10 px-4 py-2',
         lg: 'h-12 px-6 text-base',
-        sm: 'h-9 px-3',
+        sm: 'h-8 px-3 text-xs',
       },
     },
     defaultVariants: {
@@ -25,7 +30,13 @@ const buttonVariants = cva(
 );
 
 const Button = React.forwardRef(({ className, variant, size, ...props }, ref) => {
-  return <button className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props} />;
+  return (
+    <button
+      className={cn(buttonVariants({ variant, size, className }))}
+      ref={ref}
+      {...props}
+    />
+  );
 });
 
 Button.displayName = 'Button';

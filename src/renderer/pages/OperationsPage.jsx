@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/dialogs';
 import ipcService from '@/services/ipcService';
 
 function today() {
@@ -20,7 +21,87 @@ function formatDate(value) {
   return date.toLocaleDateString('en-IN');
 }
 
-export default function OperationsPage() {
+function EditOrderModal({ billno, onSave, onCancel, busy }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    const load = async () => {
+      try {
+        const result = await ipcService.requestReply('get-order-details', 'order-details-response', billno);
+        if (!mountedRef.current) return;
+        setItems(Array.isArray(result?.food_items) ? result.food_items.map((it) => ({
+          foodId: it.foodId,
+          name: it.foodName,
+          price: it.price,
+          quantity: it.quantity,
+        })) : []);
+      } catch (err) {
+        if (mountedRef.current) setError('Could not load order details.');
+      } finally {
+        if (mountedRef.current) setLoading(false);
+      }
+    };
+    load();
+    return () => { mountedRef.current = false; };
+  }, [billno]);
+
+  const setQty = (foodId, qty) => {
+    const q = Math.max(0, Number(qty) || 0);
+    setItems((prev) => prev.map((it) => it.foodId === foodId ? { ...it, quantity: q } : it));
+  };
+
+  const handleSave = () => {
+    const orderItems = items.filter((it) => it.quantity > 0).map((it) => ({ foodId: it.foodId, quantity: it.quantity }));
+    if (orderItems.length === 0) {
+      setError('Order must have at least one item.');
+      return;
+    }
+    onSave(billno, orderItems);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="surface-card rounded-2xl max-w-lg w-full max-h-[80vh] overflow-y-auto p-6 space-y-4">
+        <h3 className="text-lg font-black text-on-light">Edit Order #{billno}</h3>
+        {error ? <p className="text-sm text-error">{error}</p> : null}
+        {loading ? (
+          <p className="text-sm text-muted">Loading order details...</p>
+        ) : items.length === 0 ? (
+          <p className="text-sm text-muted">No items found.</p>
+        ) : (
+          <div className="space-y-2">
+            {items.map((item) => (
+              <div key={item.foodId} className="flex items-center justify-between gap-3 p-2 rounded border border-on-light">
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-on-light">{item.name}</p>
+                  <p className="text-xs text-muted">Rs. {Number(item.price ?? 0).toFixed(2)}</p>
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  value={item.quantity}
+                  onChange={(e) => setQty(item.foodId, e.target.value)}
+                  className="surface-input h-9 w-20 rounded px-2 text-sm text-center"
+                />
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex gap-2">
+          <Button onClick={handleSave} disabled={busy || loading}>Save Changes</Button>
+          <Button variant="secondary" onClick={onCancel} disabled={busy}>Cancel</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function OperationsPage({ initialTab }) {
+  const [activeTab, setActiveTab] = useState(initialTab || 'todaysOrders');
   const [startDate, setStartDate] = useState(today());
   const [endDate, setEndDate] = useState(today());
   const [todayOrders, setTodayOrders] = useState([]);
@@ -32,6 +113,8 @@ export default function OperationsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [editBillno, setEditBillno] = useState(null);
+  const [confirmDialog, setConfirmDialog] = useState({ open: false, kind: '' });
 
   const fetchTodayOrders = async () => {
     setLoadingToday(true);
@@ -95,167 +178,224 @@ export default function OperationsPage() {
   };
 
   const clearDiscountedOrders = async () => {
-    const ok = window.confirm('Clear all discounted order records? This cannot be undone.');
-    if (!ok) return;
-
-    setBusy(true);
-    setError('');
-    setMessage('');
-    try {
-      const result = await ipcService.requestReply('clear-discounted-orders', 'clear-discounted-orders-response', undefined);
-      if (!result?.success) {
-        setError('Failed to clear discounted orders.');
-        return;
-      }
-      setDiscountedOrders([]);
-      setMessage('Discounted orders cleared successfully.');
-    } catch (clearError) {
-      console.error('Failed to clear discounted orders:', clearError);
-      setError('Failed to clear discounted orders.');
-    } finally {
-      setBusy(false);
-    }
+    setConfirmDialog({ open: true, kind: 'discounted' });
   };
 
   const clearDeletedOrders = async () => {
-    const ok = window.confirm('Clear all deleted order records? This cannot be undone.');
-    if (!ok) return;
+    setConfirmDialog({ open: true, kind: 'deleted' });
+  };
+
+  const runClearAction = async () => {
+    if (!confirmDialog.kind) return;
 
     setBusy(true);
     setError('');
     setMessage('');
     try {
-      const result = await ipcService.requestReply('clear-deleted-orders', 'clear-deleted-orders-response', undefined);
+      const isDiscounted = confirmDialog.kind === 'discounted';
+      const result = await ipcService.requestReply(
+        isDiscounted ? 'clear-discounted-orders' : 'clear-deleted-orders',
+        isDiscounted ? 'clear-discounted-orders-response' : 'clear-deleted-orders-response',
+        undefined
+      );
       if (!result?.success) {
-        setError('Failed to clear deleted orders.');
+        setError(isDiscounted ? 'Failed to clear discounted orders.' : 'Failed to clear deleted orders.');
         return;
       }
-      setDeletedOrders([]);
-      setMessage('Deleted orders cleared successfully.');
+      if (isDiscounted) {
+        setDiscountedOrders([]);
+        setMessage('Discounted orders cleared successfully.');
+      } else {
+        setDeletedOrders([]);
+        setMessage('Deleted orders cleared successfully.');
+      }
+      setConfirmDialog({ open: false, kind: '' });
     } catch (clearError) {
-      console.error('Failed to clear deleted orders:', clearError);
-      setError('Failed to clear deleted orders.');
+      console.error('Failed to clear records:', clearError);
+      setError(confirmDialog.kind === 'discounted' ? 'Failed to clear discounted orders.' : 'Failed to clear deleted orders.');
     } finally {
       setBusy(false);
     }
   };
 
+  useEffect(() => {
+    setActiveTab(initialTab || 'todaysOrders');
+  }, [initialTab]);
+
+  useEffect(() => {
+    if (activeTab === 'todaysOrders') {
+      fetchTodayOrders();
+      return;
+    }
+    if (activeTab === 'discountedOrders') {
+      fetchDiscountedOrders();
+      return;
+    }
+    if (activeTab === 'deletedOrders') {
+      fetchDeletedOrders();
+    }
+  }, [activeTab, startDate, endDate]);
+
   return (
     <div className="space-y-4">
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 md:p-5">
-        <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={fetchTodayOrders} disabled={loadingToday}>{loadingToday ? 'Loading Today...' : "Load Today's Orders"}</Button>
+      {(activeTab === 'discountedOrders' || activeTab === 'deletedOrders') && (
+        <section className="surface-card rounded-2xl p-4 md:p-5">
+          <div className="flex flex-wrap md:flex-nowrap items-end gap-3">
+            <div className="shrink-0">
+              <label className="block text-xs uppercase text-muted mb-1">Start</label>
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="surface-input h-10 rounded-lg px-3" />
+            </div>
+            <div className="shrink-0">
+              <label className="block text-xs uppercase text-muted mb-1">End</label>
+              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="surface-input h-10 rounded-lg px-3" />
+            </div>
+            {activeTab === 'discountedOrders' && (
+              <>
+                <Button className="shrink-0" variant="secondary" onClick={fetchDiscountedOrders} disabled={loadingDiscounted}>{loadingDiscounted ? 'Loading...' : 'Load Discounted Orders'}</Button>
+                <Button className="shrink-0" variant="ghost" onClick={clearDiscountedOrders} disabled={busy}>Clear</Button>
+              </>
+            )}
+            {activeTab === 'deletedOrders' && (
+              <>
+                <Button className="shrink-0" variant="secondary" onClick={fetchDeletedOrders} disabled={loadingDeleted}>{loadingDeleted ? 'Loading...' : 'Load Deleted Orders'}</Button>
+                <Button className="shrink-0" variant="ghost" onClick={clearDeletedOrders} disabled={busy}>Clear</Button>
+              </>
+            )}
+          </div>
+        </section>
+      )}
 
-          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="h-10 rounded-lg border border-slate-300 px-3" />
-          <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="h-10 rounded-lg border border-slate-300 px-3" />
-          <Button variant="secondary" onClick={fetchDiscountedOrders} disabled={loadingDiscounted}>{loadingDiscounted ? 'Loading Discounted...' : 'Load Discounted Orders'}</Button>
-          <Button variant="secondary" onClick={fetchDeletedOrders} disabled={loadingDeleted}>{loadingDeleted ? 'Loading Deleted...' : 'Load Deleted Orders'}</Button>
-        </div>
+      {error ? <p className="text-sm text-error">{error}</p> : null}
+      {message ? <p className="text-sm text-success">{message}</p> : null}
 
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Button variant="ghost" onClick={clearDiscountedOrders} disabled={busy}>Clear Discounted Orders</Button>
-          <Button variant="ghost" onClick={clearDeletedOrders} disabled={busy}>Clear Deleted Orders</Button>
-        </div>
-      </section>
-
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
-      {message ? <p className="text-sm text-emerald-700">{message}</p> : null}
-
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-200"><h3 className="font-bold">Today's Orders</h3></div>
-          <div className="overflow-x-auto">
+      <div className="grid grid-cols-1 gap-4">
+        {activeTab === 'todaysOrders' && (
+        <section className="surface-card rounded-2xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-on-light"><h3 className="font-bold text-on-light">Today's Orders</h3></div>
+          <div className="max-h-[calc(100dvh-14rem)] overflow-auto">
             <table className="w-full min-w-[760px]">
-              <thead className="bg-slate-50 border-b border-slate-200">
+              <thead className="sticky top-0 z-10 bg-input border-b border-on-light">
                 <tr>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-slate-500">Bill</th>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-slate-500">Date</th>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-slate-500">Cashier</th>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-slate-500">Amount</th>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-slate-500">Items</th>
+                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Bill</th>
+                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Date</th>
+                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Cashier</th>
+                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Amount</th>
+                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Items</th>
+                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {todayOrders.length === 0 ? (
-                  <tr><td colSpan={5} className="px-3 py-6 text-sm text-slate-500">No today-order data loaded.</td></tr>
+                  <tr><td colSpan={6} className="px-3 py-6 text-sm text-muted">No today-order data loaded.</td></tr>
                 ) : todayOrders.map((order, i) => (
-                  <tr key={order.billno ?? `today-${i}`} className="border-b border-slate-100">
-                    <td className="px-3 py-2 text-sm">{order.billno ?? '-'}</td>
-                    <td className="px-3 py-2 text-sm">{formatDate(order.date)}</td>
-                    <td className="px-3 py-2 text-sm">{order.cashier_name || '-'}</td>
-                    <td className="px-3 py-2 text-sm">{formatCurrency(order.price)}</td>
-                    <td className="px-3 py-2 text-sm">{order.food_items || '-'}</td>
+                  <tr key={order.billno ?? `today-${i}`} className="border-b border-subtle">
+                    <td className="px-3 py-2 text-sm text-on-light">{order.billno ?? '-'}</td>
+                    <td className="px-3 py-2 text-sm text-on-light">{formatDate(order.date)}</td>
+                    <td className="px-3 py-2 text-sm text-on-light">{order.cashier_name || '-'}</td>
+                    <td className="px-3 py-2 text-sm text-on-light">{formatCurrency(order.price)}</td>
+                    <td className="px-3 py-2 text-sm text-on-light">{order.food_items || '-'}</td>
+                    <td className="px-3 py-2">
+                      <Button size="sm" variant="secondary" onClick={() => setEditBillno(order.billno)} disabled={busy}>Edit</Button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         </section>
+        )}
 
-        <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-200"><h3 className="font-bold">Discounted Orders</h3></div>
-          <div className="overflow-x-auto">
+        {activeTab === 'discountedOrders' && (
+        <section className="surface-card rounded-2xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-on-light"><h3 className="font-bold text-on-light">Discounted Orders</h3></div>
+          <div className="max-h-[calc(100dvh-14rem)] overflow-auto">
             <table className="w-full min-w-[860px]">
-              <thead className="bg-slate-50 border-b border-slate-200">
+              <thead className="sticky top-0 z-10 bg-input border-b border-on-light">
                 <tr>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-slate-500">Bill</th>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-slate-500">Date</th>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-slate-500">Initial</th>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-slate-500">Discount %</th>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-slate-500">Discount Amt</th>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-slate-500">Final</th>
+                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Bill</th>
+                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Date</th>
+                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Initial</th>
+                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Discount %</th>
+                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Discount Amt</th>
+                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Final</th>
                 </tr>
               </thead>
               <tbody>
                 {discountedOrders.length === 0 ? (
-                  <tr><td colSpan={6} className="px-3 py-6 text-sm text-slate-500">No discounted-order data loaded.</td></tr>
+                  <tr><td colSpan={6} className="px-3 py-6 text-sm text-muted">No discounted-order data loaded.</td></tr>
                 ) : discountedOrders.map((order, i) => (
-                  <tr key={order.billno ?? `disc-${i}`} className="border-b border-slate-100">
-                    <td className="px-3 py-2 text-sm">{order.billno ?? '-'}</td>
-                    <td className="px-3 py-2 text-sm">{formatDate(order.date)}</td>
-                    <td className="px-3 py-2 text-sm">{formatCurrency(order.Initial_price)}</td>
-                    <td className="px-3 py-2 text-sm">{Number(order.discount_percentage || 0).toFixed(2)}%</td>
-                    <td className="px-3 py-2 text-sm">{formatCurrency(order.discount_amount)}</td>
-                    <td className="px-3 py-2 text-sm">{formatCurrency(order.Final_Price)}</td>
+                  <tr key={order.billno ?? `disc-${i}`} className="border-b border-subtle">
+                    <td className="px-3 py-2 text-sm text-on-light">{order.billno ?? '-'}</td>
+                    <td className="px-3 py-2 text-sm text-on-light">{formatDate(order.date)}</td>
+                    <td className="px-3 py-2 text-sm text-on-light">{formatCurrency(order.Initial_price)}</td>
+                    <td className="px-3 py-2 text-sm text-on-light">{Number(order.discount_percentage || 0).toFixed(2)}%</td>
+                    <td className="px-3 py-2 text-sm text-on-light">{formatCurrency(order.discount_amount)}</td>
+                    <td className="px-3 py-2 text-sm text-on-light">{formatCurrency(order.Final_Price)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         </section>
+        )}
 
-        <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden xl:col-span-2">
-          <div className="px-4 py-3 border-b border-slate-200"><h3 className="font-bold">Deleted Orders</h3></div>
-          <div className="overflow-x-auto">
+        {activeTab === 'deletedOrders' && (
+        <section className="surface-card rounded-2xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-on-light"><h3 className="font-bold text-on-light">Deleted Orders</h3></div>
+          <div className="max-h-[calc(100dvh-14rem)] overflow-auto">
             <table className="w-full min-w-[980px]">
-              <thead className="bg-slate-50 border-b border-slate-200">
+              <thead className="sticky top-0 z-10 bg-input border-b border-on-light">
                 <tr>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-slate-500">Bill</th>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-slate-500">Date</th>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-slate-500">Cashier</th>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-slate-500">Amount</th>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-slate-500">Reason</th>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-slate-500">Items</th>
+                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Bill</th>
+                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Date</th>
+                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Cashier</th>
+                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Amount</th>
+                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Reason</th>
+                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Items</th>
                 </tr>
               </thead>
               <tbody>
                 {deletedOrders.length === 0 ? (
-                  <tr><td colSpan={6} className="px-3 py-6 text-sm text-slate-500">No deleted-order data loaded.</td></tr>
+                  <tr><td colSpan={6} className="px-3 py-6 text-sm text-muted">No deleted-order data loaded.</td></tr>
                 ) : deletedOrders.map((order, i) => (
-                  <tr key={order.billno ?? `del-${i}`} className="border-b border-slate-100">
-                    <td className="px-3 py-2 text-sm">{order.billno ?? '-'}</td>
-                    <td className="px-3 py-2 text-sm">{formatDate(order.date)}</td>
-                    <td className="px-3 py-2 text-sm">{order.cashier_name || '-'}</td>
-                    <td className="px-3 py-2 text-sm">{formatCurrency(order.price)}</td>
-                    <td className="px-3 py-2 text-sm">{order.reason || '-'}</td>
-                    <td className="px-3 py-2 text-sm">{order.food_items || '-'}</td>
+                  <tr key={order.billno ?? `del-${i}`} className="border-b border-subtle">
+                    <td className="px-3 py-2 text-sm text-on-light">{order.billno ?? '-'}</td>
+                    <td className="px-3 py-2 text-sm text-on-light">{formatDate(order.date)}</td>
+                    <td className="px-3 py-2 text-sm text-on-light">{order.cashier_name || '-'}</td>
+                    <td className="px-3 py-2 text-sm text-on-light">{formatCurrency(order.price)}</td>
+                    <td className="px-3 py-2 text-sm text-on-light">{order.reason || '-'}</td>
+                    <td className="px-3 py-2 text-sm text-on-light">{order.food_items || '-'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         </section>
+        )}
       </div>
+
+      {editBillno && (
+        <EditOrderModal
+          billno={editBillno}
+          onSave={updateOrder}
+          onCancel={() => setEditBillno(null)}
+          busy={busy}
+        />
+      )}
+
+      <ConfirmDialog
+        open={confirmDialog.open}
+        title={confirmDialog.kind === 'discounted' ? 'Clear Discounted Orders' : 'Clear Deleted Orders'}
+        message={
+          confirmDialog.kind === 'discounted'
+            ? 'Clear all discounted order records? This cannot be undone.'
+            : 'Clear all deleted order records? This cannot be undone.'
+        }
+        confirmText="Clear"
+        onConfirm={runClearAction}
+        onCancel={() => setConfirmDialog({ open: false, kind: '' })}
+        busy={busy}
+      />
     </div>
   );
 }

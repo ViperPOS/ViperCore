@@ -1,109 +1,230 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
+import {
+  Receipt, MenuSquare, BookOpen,
+  BarChart3, Settings, LogOut, ChevronDown, ChevronRight,
+} from 'lucide-react';
 import BillingPage from '@/pages/BillingPage';
-import { Button } from '@/components/ui/button';
-import HomePage from '@/pages/HomePage';
 import HistoryPage from '@/pages/HistoryPage';
-import InventoryPage from '@/pages/InventoryPage';
 import MenuPage from '@/pages/MenuPage';
 import OperationsPage from '@/pages/OperationsPage';
 import ReportsPage from '@/pages/ReportsPage';
 import SettingsPage from '@/pages/SettingsPage';
+import SearchOrderPage from '@/pages/SearchOrderPage';
+
+const navSections = [
+  { key: 'billing',   label: 'Billing',   Icon: Receipt },
+  { key: 'menu',      label: 'Menu',      Icon: MenuSquare },
+  { key: 'history',   label: 'History',   Icon: BookOpen, subViews: [
+    { key: 'todaysOrders',    label: "Today's Orders" },
+    { key: 'orderHistory',    label: 'Order History' },
+    { key: 'discountedOrders', label: 'Discounted Orders' },
+    { key: 'deletedOrders',   label: 'Deleted Orders' },
+    { key: 'searchOrder',     label: 'Search Order' },
+  ]},
+  { key: 'reports',   label: 'Reports',   Icon: BarChart3, subViews: [
+    { key: 'dayEndSummary',      label: 'Day End Summary' },
+    { key: 'salesOverview',      label: 'Sales Overview' },
+    { key: 'categorySales',      label: 'Category Sales' },
+    { key: 'discountedOrders',   label: 'Discounted Orders' },
+    { key: 'topSellingItems',    label: 'Top Items' },
+    { key: 'topSellingCategory', label: 'Top Categories' },
+    { key: 'itemSummary',        label: 'Item Summary' },
+    { key: 'employeeAnalysis',   label: 'Employee Analysis' },
+    { key: 'bestInCategory',     label: 'Best In Category' },
+    { key: 'taxOnItems',         label: 'Tax On Items' },
+  ]},
+  { key: 'settings', label: 'Settings', Icon: Settings, subViews: [
+    { key: 'profile',       label: 'Profile & Password' },
+    { key: 'featureToggles', label: 'Feature Toggles' },
+    { key: 'theme',         label: 'Theme' },
+    { key: 'printerConfig', label: 'Printer Config' },
+    { key: 'businessInfo',  label: 'Business Info' },
+    { key: 'backup',        label: 'Backup Database' },
+    { key: 'restore',       label: 'Restore Database' },
+  ]},
+];
+
+function SidebarNav({ sections, activeView, activeSubView, expandedView, onNavClick, onSubClick }) {
+  return (
+    <nav className="flex-1 overflow-y-auto py-3 space-y-0.5">
+      {sections.map(({ key, label, Icon, subViews }) => {
+        const isActive = activeView === key;
+        const hasSub = subViews?.length > 0;
+        const isExpanded = expandedView === key;
+
+        return (
+          <div key={key}>
+            <button
+              onClick={() => onNavClick(key)}
+              className="w-full text-left px-5 py-3 flex items-center gap-3 rounded-lg mx-2 transition-all"
+              style={{
+                backgroundColor: isActive ? 'var(--bg-hover)' : 'transparent',
+                color: 'var(--text-on-dark)',
+                opacity: isActive ? 1 : 0.6,
+                fontWeight: isActive ? 600 : 400,
+                width: 'calc(100% - 16px)',
+                border: isActive ? '1px solid rgba(255, 255, 255, 0.35)' : '1px solid transparent',
+              }}
+            >
+              <Icon size={20} strokeWidth={isActive ? 2.5 : 1.5} />
+              <span className="flex-1 text-sm">{label}</span>
+              {hasSub && (
+                isExpanded
+                  ? <ChevronDown size={14} style={{ opacity: 0.5 }} />
+                  : <ChevronRight size={14} style={{ opacity: 0.5 }} />
+              )}
+            </button>
+
+            {isExpanded && hasSub && (
+              <div className="px-4 mt-0.5 mb-1">
+                {subViews.map((sub) => {
+                  const subActive = activeSubView === sub.key;
+                  return (
+                    <button
+                      key={sub.key}
+                      onClick={() => onSubClick(sub.key)}
+                      className="block w-full text-left px-4 py-2 text-xs rounded-md transition-all"
+                      style={{
+                        backgroundColor: subActive ? 'var(--bg-hover)' : 'transparent',
+                        color: 'var(--text-on-dark)',
+                        opacity: subActive ? 1 : 0.45,
+                        fontWeight: subActive ? 500 : 400,
+                        borderLeft: subActive ? '2px solid #FFFFFF' : '2px solid transparent',
+                      }}
+                    >
+                      {sub.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </nav>
+  );
+}
 
 export default function DashboardPage({ user, onLogout }) {
   const [activeView, setActiveView] = useState('billing');
+  const [activeSubView, setActiveSubView] = useState('');
+  const [expandedView, setExpandedView] = useState('');
 
-  const navItems = useMemo(() => ([
-    { key: 'billing', label: 'Billing' },
-    { key: 'home', label: 'Home' },
-    { key: 'menu', label: 'Menu' },
-    { key: 'history', label: 'History' },
-    { key: 'operations', label: 'Operations' },
-    { key: 'inventory', label: 'Inventory' },
-    { key: 'reports', label: 'Reports' },
-    { key: 'settings', label: 'Settings' },
-  ]), []);
+  const handleNavClick = (key) => {
+    const section = navSections.find((s) => s.key === key);
+    const hasSubViews = Boolean(section?.subViews?.length);
+
+    if (hasSubViews) {
+      const isSameSection = activeView === key;
+      const isExpanded = expandedView === key;
+
+      setActiveView(key);
+      if (!activeSubView || !section.subViews.some((sub) => sub.key === activeSubView)) {
+        setActiveSubView(section.subViews[0].key);
+      }
+
+      if (isSameSection && isExpanded) {
+        setExpandedView('');
+      } else {
+        setExpandedView(key);
+      }
+    } else {
+      setActiveView(key);
+      setActiveSubView('');
+      setExpandedView('');
+    }
+  };
 
   const renderContent = () => {
-    if (activeView === 'billing') {
-      return <BillingPage user={user} />;
-    }
-
-    if (activeView === 'home') {
-      return <HomePage />;
-    }
-
-    if (activeView === 'menu') {
-      return <MenuPage />;
-    }
+    if (activeView === 'billing') return <BillingPage user={user} />;
+    if (activeView === 'menu') return <MenuPage />;
 
     if (activeView === 'history') {
-      return <HistoryPage />;
-    }
-
-    if (activeView === 'operations') {
-      return <OperationsPage />;
-    }
-
-    if (activeView === 'inventory') {
-      return <InventoryPage />;
+      if (['todaysOrders', 'discountedOrders', 'deletedOrders'].includes(activeSubView)) {
+        return <OperationsPage initialTab={activeSubView} />;
+      }
+      if (activeSubView === 'orderHistory') return <HistoryPage />;
+      if (activeSubView === 'searchOrder') return <SearchOrderPage />;
+      return <OperationsPage initialTab="todaysOrders" />;
     }
 
     if (activeView === 'reports') {
-      return <ReportsPage />;
+      return <ReportsPage initialReport={activeSubView} />;
     }
 
     if (activeView === 'settings') {
-      return <SettingsPage user={user} onLogout={onLogout} />;
+      return <SettingsPage user={user} onLogout={onLogout} initialTab={activeSubView} />;
     }
 
-    return (
-      <section className="rounded-2xl border border-dashed border-slate-300 bg-white p-8">
-        <h2 className="text-xl font-bold mb-2">{(activeView?.[0] || '').toUpperCase() + (activeView || '').slice(1)} migration next</h2>
-        <p className="text-slate-600">
-          This section is queued for migration. Home is now live on React with real IPC data.
-        </p>
-      </section>
-    );
+    return null;
   };
 
+  const currentSection = navSections.find((s) => s.key === activeView);
+  const pageTitle = currentSection?.label ?? '';
+
   return (
-    <div className="min-h-screen bg-[#f8fafc] text-slate-900">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
-          <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-[#0f766e]">Lassi Corner POS</p>
-            <h1 className="text-2xl font-black">React App Shell</h1>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="text-right">
-              <p className="text-sm font-semibold">{user?.username || 'User'}</p>
-              <p className="text-xs text-slate-500">Role: {user?.role || 'staff'}</p>
-            </div>
-            <Button variant="secondary" onClick={onLogout}>Sign out</Button>
-          </div>
+    <div
+      className="min-h-screen flex"
+      style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-on-light)' }}
+    >
+      {/* Sidebar */}
+      <aside
+        className="w-72 flex flex-col shrink-0"
+        style={{ backgroundColor: 'var(--bg-sidebar)', borderRight: '1px solid rgba(208, 201, 195, 0.25)' }}
+      >
+        {/* Brand */}
+        <div className="px-6 py-6" style={{ borderBottom: '1px solid rgba(208, 201, 195, 0.25)' }}>
+          <p className="text-sm font-bold tracking-[0.15em]" style={{ color: 'var(--text-on-dark)' }}>
+            Lassi Corner POS
+          </p>
+          <p className="text-[10px] mt-1" style={{ color: 'var(--text-on-dark)', opacity: 0.4 }}>
+            {user?.username ?? 'Staff'} / {user?.role ?? 'user'}
+          </p>
         </div>
-      </header>
 
-      <main className="max-w-7xl mx-auto px-6 py-8 space-y-8">
-        <section className="rounded-2xl border border-slate-200 bg-white p-3">
-          <div className="flex flex-wrap gap-2">
-            {navItems.map((item) => {
-              const active = item.key === activeView;
-              return (
-                <Button
-                  key={item.key}
-                  variant={active ? 'default' : 'secondary'}
-                  size="sm"
-                  onClick={() => setActiveView(item.key)}
-                >
-                  {item.label}
-                </Button>
-              );
-            })}
-          </div>
-        </section>
+        <SidebarNav
+          sections={navSections}
+          activeView={activeView}
+          activeSubView={activeSubView}
+          expandedView={expandedView}
+          onNavClick={handleNavClick}
+          onSubClick={setActiveSubView}
+        />
 
-        {renderContent()}
+        {/* Sign out */}
+        <div className="px-4 py-4" style={{ borderTop: '1px solid rgba(208, 201, 195, 0.25)' }}>
+          <button
+            onClick={onLogout}
+            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-all"
+            style={{ color: 'var(--text-on-dark)', opacity: 0.72 }}
+          >
+            <LogOut size={16} />
+            Sign out
+          </button>
+        </div>
+      </aside>
+
+      {/* Main */}
+      <main className="flex-1 overflow-y-auto" style={{ backgroundColor: 'var(--bg-app)' }}>
+        {/* Top bar */}
+        <header
+          className="px-8 py-4 flex items-center justify-between sticky top-0 z-10"
+          style={{
+            backgroundColor: 'var(--bg-app)',
+            borderBottom: '1px solid rgba(19, 18, 17, 0.10)',
+          }}
+        >
+          <h1 className="text-lg font-bold" style={{ color: 'var(--text-on-light)' }}>
+            {pageTitle}
+          </h1>
+          <p className="text-xs" style={{ color: 'var(--text-on-light)', opacity: 0.55 }}>
+            {new Date().toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+          </p>
+        </header>
+
+        <div className="px-8 py-6">
+          {renderContent()}
+        </div>
       </main>
     </div>
   );

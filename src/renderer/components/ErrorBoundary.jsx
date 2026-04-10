@@ -1,4 +1,5 @@
 import React from 'react';
+import { AlertTriangle } from 'lucide-react';
 
 export default class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -21,16 +22,23 @@ export default class ErrorBoundary extends React.Component {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-4">
+        <div
+          style={{ backgroundColor: 'var(--color-a)', color: 'var(--text-on-dark)' }}
+          className="min-h-screen flex items-center justify-center p-4"
+        >
           <div className="max-w-md w-full text-center">
-            <div className="text-5xl mb-4">&#9888;</div>
+            <AlertTriangle className="w-12 h-12 mx-auto mb-4" />
             <h1 className="text-xl font-semibold mb-2">Something went wrong</h1>
-            <p className="text-sm text-slate-400 mb-6">
+            <p className="text-sm mb-6" style={{ color: 'var(--text-on-dark)', opacity: 0.7 }}>
               {this.state.error?.message || 'An unexpected error occurred.'}
             </p>
             <button
               onClick={this.handleReload}
-              className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition-colors"
+              className="px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+              style={{
+                backgroundColor: 'var(--color-a)',
+                color: 'var(--text-on-dark)',
+              }}
             >
               Try Again
             </button>

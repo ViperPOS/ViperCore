@@ -15,7 +15,7 @@ export default function App() {
     const restoreSession = async () => {
       try {
         if (!ipcService.isAvailable()) {
-          setError('Electron IPC is unavailable.');
+          if (mounted) setError('Electron IPC is unavailable.');
           return;
         }
 
@@ -25,21 +25,14 @@ export default function App() {
         }
       } catch (sessionError) {
         console.error('Failed to restore session:', sessionError);
-        if (mounted) {
-          setError('Unable to restore previous session.');
-        }
+        if (mounted) setError('Unable to restore previous session.');
       } finally {
-        if (mounted) {
-          setBooting(false);
-        }
+        if (mounted) setBooting(false);
       }
     };
 
     restoreSession();
-
-    return () => {
-      mounted = false;
-    };
+    return () => { mounted = false; };
   }, []);
 
   const handleLogin = async ({ username, password }) => {
@@ -72,8 +65,11 @@ export default function App() {
 
   if (booting) {
     return (
-      <div className="h-screen w-screen grid place-items-center bg-slate-950 text-white">
-        <p className="text-sm tracking-[0.25em] uppercase">Loading session...</p>
+      <div
+        className="h-screen w-screen flex items-center justify-center"
+        style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-on-light)' }}
+      >
+        <p className="text-sm tracking-[0.25em] uppercase" style={{ opacity: 0.6 }}>Loading session...</p>
       </div>
     );
   }
