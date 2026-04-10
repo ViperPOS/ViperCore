@@ -3,11 +3,11 @@
   "version": "1.0.4",
   "main": "main.js",
   "description": "Lassi Corner POS System",
-  "author": "Alston Daniel Mendonca & Reevan D Mello",
+  "author": "Alston Mendonca <alstondmendonca@gmail.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/alstonmendonca/ProperLCP.git"
+    "url": "https://github.com/alstonmendonca/AlsLCP.git"
   },
   "scripts": {
     "start": "electron .",
