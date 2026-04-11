@@ -35,10 +35,15 @@ export default function BillingPage({ user }) {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [showHoldBill, setShowHoldBill] = useState(true);
+  const [autoPrintBillOnSave, setAutoPrintBillOnSave] = useState(false);
+  const [autoPrintKotOnSave, setAutoPrintKotOnSave] = useState(false);
   const [lastBill, setLastBill] = useState(null);
   const mountedRef = useRef(true);
   const billTimerRef = useRef(null);
   const draftLoadedRef = useRef(false);
+  const pendingSavedBillRef = useRef(null);
+  const autoPrintBillOnSaveRef = useRef(false);
+  const autoPrintKotOnSaveRef = useRef(false);
 
   useEffect(() => {
     try {
@@ -151,13 +156,45 @@ export default function BillingPage({ user }) {
         const settings = await ipcService.invoke('load-ui-settings');
         if (!active) return;
         setShowHoldBill(settings?.showHoldBill !== false);
+        setAutoPrintBillOnSave(settings?.autoPrintBillOnSave === true);
+        setAutoPrintKotOnSave(settings?.autoPrintKotOnSave === true);
       } catch (err) {
-        if (active) setShowHoldBill(true);
+        if (active) {
+          setShowHoldBill(true);
+          setAutoPrintBillOnSave(false);
+          setAutoPrintKotOnSave(false);
+        }
       }
     };
     loadUiSettings();
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    autoPrintBillOnSaveRef.current = autoPrintBillOnSave;
+    autoPrintKotOnSaveRef.current = autoPrintKotOnSave;
+  }, [autoPrintBillOnSave, autoPrintKotOnSave]);
+
+  const sendBillPrint = (billData) => {
+    if (!billData) return;
+    ipcService.send('print-bill-only', {
+      billItems: billData.items.map((l) => ({ foodId: l.foodId, foodName: l.name, price: l.price, quantity: l.quantity })),
+      totalAmount: billData.amount,
+      kot: billData.kot,
+      orderId: billData.orderId,
+      dateTime: new Date().toLocaleString('en-IN'),
+    });
+  };
+
+  const sendKotPrint = (billData) => {
+    if (!billData) return;
+    ipcService.send('print-kot-only', {
+      billItems: billData.items.map((l) => ({ foodId: l.foodId, foodName: l.name, price: l.price, quantity: l.quantity })),
+      totalAmount: billData.amount,
+      kot: billData.kot,
+      orderId: billData.orderId,
+    });
+  };
 
   useEffect(() => {
     if (!selectedCategory) return;
@@ -175,7 +212,32 @@ export default function BillingPage({ user }) {
       if (billTimerRef.current) { clearTimeout(billTimerRef.current); billTimerRef.current = null; }
       setSaving(false);
       setMessage(`Bill saved. KOT ${payload?.kot ?? '-'} | Order ${payload?.orderId ?? '-'}`);
-      setLastBill({ kot: payload?.kot, orderId: payload?.orderId, items: [...cart], amount: finalTotal });
+
+      const billSnapshot = pendingSavedBillRef.current || {
+        items: [],
+        amount: 0,
+      };
+
+      const savedBill = {
+        kot: payload?.kot,
+        orderId: payload?.orderId,
+        items: Array.isArray(billSnapshot.items) ? billSnapshot.items : [],
+        amount: Number(billSnapshot.amount || 0),
+      };
+
+      setLastBill(savedBill);
+
+      if (autoPrintBillOnSaveRef.current || autoPrintKotOnSaveRef.current) {
+        setPrinting(true);
+        if (autoPrintBillOnSaveRef.current) {
+          sendBillPrint(savedBill);
+        }
+        if (autoPrintKotOnSaveRef.current) {
+          sendKotPrint(savedBill);
+        }
+      }
+
+      pendingSavedBillRef.current = null;
       setCart([]);
       setDiscountAmount('');
       setDiscountPercent('');
@@ -315,6 +377,11 @@ export default function BillingPage({ user }) {
     setError('');
     setMessage('');
 
+    pendingSavedBillRef.current = {
+      items: [...cart],
+      amount: finalTotal,
+    };
+
     ipcService.send('save-bill', {
       cashier: user.userid,
       date: localDateString(),
@@ -360,25 +427,14 @@ export default function BillingPage({ user }) {
     if (!lastBill) return;
     setPrinting(true);
     setError('');
-    ipcService.send('print-bill-only', {
-      billItems: lastBill.items.map((l) => ({ foodId: l.foodId, foodName: l.name, price: l.price, quantity: l.quantity })),
-      totalAmount: lastBill.amount,
-      kot: lastBill.kot,
-      orderId: lastBill.orderId,
-      dateTime: new Date().toLocaleString('en-IN'),
-    });
+    sendBillPrint(lastBill);
   };
 
   const printKot = () => {
     if (!lastBill) return;
     setPrinting(true);
     setError('');
-    ipcService.send('print-kot-only', {
-      billItems: lastBill.items.map((l) => ({ foodId: l.foodId, foodName: l.name, price: l.price, quantity: l.quantity })),
-      totalAmount: lastBill.amount,
-      kot: lastBill.kot,
-      orderId: lastBill.orderId,
-    });
+    sendKotPrint(lastBill);
   };
 
   const handleDiscountPercentChange = (value) => {

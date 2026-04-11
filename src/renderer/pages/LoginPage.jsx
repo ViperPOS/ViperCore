@@ -3,12 +3,46 @@ import { Button } from '@/components/ui/button';
 import ipcService from '@/services/ipcService';
 
 export default function LoginPage({ onLogin, loading, error }) {
+  const [method, setMethod] = useState('password');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [pin, setPin] = useState('');
+  const loginCardMuted = 'var(--text-on-dark)';
+  const loginErrorColor = 'var(--text-on-dark)';
+  const loginInputStyle = {
+    backgroundColor: 'var(--bg-card)',
+    color: 'var(--text-on-light)',
+    border: '1.5px solid var(--border-on-light)',
+  };
+  const selectedMethodButtonStyle = {
+    backgroundColor: 'var(--btn-secondary-bg)',
+    color: 'var(--btn-secondary-text)',
+    borderColor: 'var(--btn-secondary-border)',
+  };
+  const unselectedMethodButtonStyle = {
+    backgroundColor: 'transparent',
+    color: 'var(--text-on-dark)',
+    borderColor: 'var(--border-on-dark)',
+  };
+  const submitButtonStyle = {
+    backgroundColor: 'var(--btn-secondary-bg)',
+    color: 'var(--btn-secondary-text)',
+    borderColor: 'var(--btn-secondary-border)',
+  };
+  const exitButtonStyle = {
+    backgroundColor: 'transparent',
+    color: 'var(--text-on-dark)',
+    borderColor: 'var(--border-on-dark)',
+  };
 
   const submit = (event) => {
     event.preventDefault();
-    onLogin({ username: username.trim(), password });
+    if (method === 'pin') {
+      onLogin({ method: 'pin', pin: pin.trim() });
+      return;
+    }
+
+    onLogin({ method: 'password', username: username.trim(), password });
   };
 
   const handleExit = () => {
@@ -34,16 +68,45 @@ export default function LoginPage({ onLogin, loading, error }) {
         >
           Lassi Corner POS
         </p>
-        <h1 className="text-3xl font-black mb-2" style={{ color: 'var(--text-on-light)' }}>
+        <h1 className="text-3xl font-black mb-2" style={{ color: 'var(--text-on-dark)' }}>
           Welcome Back
         </h1>
-        <p className="text-sm mb-6" style={{ color: 'var(--text-muted)' }}>
+        <p className="text-sm mb-6" style={{ color: loginCardMuted, opacity: 0.72 }}>
           Sign in to continue to your billing dashboard.
         </p>
 
         <form onSubmit={submit} className="space-y-4">
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              className="hover:opacity-90"
+              onClick={() => setMethod('password')}
+              disabled={loading}
+              style={method === 'password'
+                ? selectedMethodButtonStyle
+                : unselectedMethodButtonStyle}
+            >
+              Username + Password
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              className="hover:opacity-90"
+              onClick={() => setMethod('pin')}
+              disabled={loading}
+              style={method === 'pin'
+                ? selectedMethodButtonStyle
+                : unselectedMethodButtonStyle}
+            >
+              PIN Login
+            </Button>
+          </div>
+
+          {method === 'password' ? (
+            <>
           <div>
-            <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-on-light)' }}>
+            <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-on-dark)' }}>
               Username
             </label>
             <input
@@ -51,11 +114,7 @@ export default function LoginPage({ onLogin, loading, error }) {
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               className="w-full h-11 rounded-lg px-3 text-sm outline-none"
-              style={{
-                backgroundColor: 'var(--bg-card)',
-                color: 'var(--text-on-light)',
-                border: '1.5px solid var(--border-on-light)',
-              }}
+              style={loginInputStyle}
               placeholder="Enter your username"
               autoFocus
               required
@@ -63,7 +122,7 @@ export default function LoginPage({ onLogin, loading, error }) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-on-light)' }}>
+            <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-on-dark)' }}>
               Password
             </label>
             <input
@@ -71,25 +130,41 @@ export default function LoginPage({ onLogin, loading, error }) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="w-full h-11 rounded-lg px-3 text-sm outline-none"
-              style={{
-                backgroundColor: 'var(--bg-card)',
-                color: 'var(--text-on-light)',
-                border: '1.5px solid var(--border-on-light)',
-              }}
+              style={loginInputStyle}
               placeholder="Enter your password"
               required
             />
           </div>
-
-          {error && (
-            <p className="text-sm" style={{ color: 'var(--status-error)' }}>{error}</p>
+            </>
+          ) : (
+            <div>
+              <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-on-dark)' }}>
+                PIN
+              </label>
+              <input
+                type="password"
+                value={pin}
+                onChange={(e) => setPin(e.target.value.replace(/\D+/g, '').slice(0, 8))}
+                className="w-full h-11 rounded-lg px-3 text-sm outline-none"
+                style={loginInputStyle}
+                placeholder="Enter your PIN"
+                required
+              />
+              <p className="text-xs mt-1" style={{ color: loginCardMuted, opacity: 0.72 }}>
+                PIN should be 4 to 8 digits.
+              </p>
+            </div>
           )}
 
-          <Button type="submit" size="lg" className="w-full" disabled={loading}>
+          {error && (
+            <p className="text-sm" style={{ color: loginErrorColor, opacity: 0.9 }}>{error}</p>
+          )}
+
+          <Button type="submit" size="lg" className="w-full hover:opacity-90" style={submitButtonStyle} disabled={loading}>
             {loading ? 'Signing in...' : 'Sign in'}
           </Button>
 
-          <Button type="button" variant="secondary" size="lg" className="w-full" onClick={handleExit} disabled={loading}>
+          <Button type="button" variant="secondary" size="lg" className="w-full hover:opacity-90" style={exitButtonStyle} onClick={handleExit} disabled={loading}>
             Exit App
           </Button>
         </form>

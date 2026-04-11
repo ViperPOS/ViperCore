@@ -4,40 +4,135 @@ import ipcService from '@/services/ipcService';
 import PrinterConfig from '@/pages/PrinterConfigPage';
 import BusinessInfoPage from '@/pages/BusinessInfoPage';
 import BackupRestorePage from '@/pages/BackupRestorePage';
+import { applyThemePreset, resolveThemePreset } from '@/lib/themePresets';
 
 function ThemeTab() {
-  const palette = [
-    { name: 'Black', value: '#000000' },
-    { name: 'White', value: '#FFFFFF' },
-    { name: 'Gray 90', value: '#1A1A1A' },
-    { name: 'Gray 60', value: '#6B6B6B' },
-    { name: 'Gray 15', value: '#E6E6E6' },
+  const [selectedPreset, setSelectedPreset] = useState('creamCharcoal');
+  const [savingPreset, setSavingPreset] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  const presetCards = [
+    {
+      key: 'creamCharcoal',
+      title: 'Cream + Charcoal',
+      subtitle: 'EEE5DA and 262424',
+      colors: ['#262424', '#EEE5DA', '#6B6B6B'],
+    },
+    {
+      key: 'classicMono',
+      title: 'Classic Black + White',
+      subtitle: '000000 and FFFFFF',
+      colors: ['#000000', '#FFFFFF', '#6B6B6B'],
+    },
+    {
+      key: 'navySunburst',
+      title: 'Navy + Sunburst',
+      subtitle: '0A122A and FFF7E6',
+      colors: ['#0A122A', '#FFF7E6', '#6B6B6B'],
+    },
+    {
+      key: 'forestCream',
+      title: 'Forest + Cream',
+      subtitle: '004643 and F0EDE5',
+      colors: ['#004643', '#F0EDE5', '#6B6B6B'],
+    },
+    {
+      key: 'mintRose',
+      title: 'Mint + Rose',
+      subtitle: 'F0FFF0 and C54B8C',
+      colors: ['#F0FFF0', '#C54B8C', '#6B6B6B'],
+    },
   ];
 
+  useEffect(() => {
+    let mounted = true;
+
+    const loadPreset = async () => {
+      try {
+        const settings = await ipcService.invoke('load-ui-settings');
+        if (!mounted) return;
+        const resolved = resolveThemePreset(settings?.themePreset);
+        setSelectedPreset(resolved);
+      } catch (loadError) {
+        if (mounted) {
+          setError('Could not load current theme preset.');
+        }
+      }
+    };
+
+    loadPreset();
+    return () => { mounted = false; };
+  }, []);
+
+  const switchTheme = async (presetKey) => {
+    const resolved = resolveThemePreset(presetKey);
+    setSelectedPreset(resolved);
+    setSavingPreset(true);
+    setMessage('');
+    setError('');
+    applyThemePreset(resolved);
+
+    try {
+      const result = await ipcService.invoke('save-ui-settings', { themePreset: resolved });
+      if (!result?.success) {
+        setError(result?.message || 'Failed to save theme preset.');
+        return;
+      }
+      setMessage('Theme preset updated.');
+    } catch (saveError) {
+      setError('Failed to save theme preset.');
+    } finally {
+      setSavingPreset(false);
+    }
+  };
+
   return (
-    <section className="surface-card rounded-2xl p-5 space-y-5 max-w-lg">
+    <section className="surface-card rounded-2xl p-5 space-y-5 max-w-3xl">
       <div>
         <h2 className="text-xl font-black text-on-light">Theme</h2>
-        <p className="text-sm text-muted mt-1">The app uses a fixed monochrome palette across every screen.</p>
+        <p className="text-sm text-muted mt-1">Switch between presets any time. More presets can be added easily.</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-        {palette.map((swatch) => (
-          <div key={swatch.value} className="rounded-xl border border-on-light p-3 text-center space-y-2">
-            <div className="h-12 rounded-lg border border-on-light" style={{ backgroundColor: swatch.value }} />
-            <div>
-              <p className="text-xs font-semibold text-on-light">{swatch.name}</p>
-              <p className="text-[11px] text-muted">{swatch.value}</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {presetCards.map((preset) => {
+          const active = selectedPreset === preset.key;
+          return (
+            <div key={preset.key} className="rounded-xl border p-4 space-y-3" style={{ borderColor: active ? 'var(--text-on-light)' : 'var(--border-subtle)' }}>
+              <div>
+                <p className="text-sm font-bold text-on-light">{preset.title}</p>
+                <p className="text-xs text-muted mt-1">{preset.subtitle}</p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {preset.colors.map((color) => (
+                  <div key={`${preset.key}-${color}`} className="h-9 w-9 rounded-md border border-on-light" style={{ backgroundColor: color }} />
+                ))}
+              </div>
+
+              <Button
+                type="button"
+                variant={active ? 'default' : 'secondary'}
+                onClick={() => switchTheme(preset.key)}
+                disabled={savingPreset}
+              >
+                {active ? 'Active' : 'Use This Theme'}
+              </Button>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
+
+      {error ? <p className="text-sm text-error">{error}</p> : null}
+      {message ? <p className="text-sm text-success">{message}</p> : null}
     </section>
   );
 }
 
 function FeatureTogglesTab() {
   const [showHoldBill, setShowHoldBill] = useState(true);
+  const [autoPrintBillOnSave, setAutoPrintBillOnSave] = useState(false);
+  const [autoPrintKotOnSave, setAutoPrintKotOnSave] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -54,6 +149,8 @@ function FeatureTogglesTab() {
         const settings = await ipcService.invoke('load-ui-settings');
         if (!mountedRef.current) return;
         setShowHoldBill(settings?.showHoldBill !== false);
+        setAutoPrintBillOnSave(settings?.autoPrintBillOnSave === true);
+        setAutoPrintKotOnSave(settings?.autoPrintKotOnSave === true);
       } catch (loadError) {
         if (mountedRef.current) setError('Could not load feature toggles.');
       } finally {
@@ -70,7 +167,11 @@ function FeatureTogglesTab() {
     setError('');
     setMessage('');
     try {
-      const result = await ipcService.invoke('save-ui-settings', { showHoldBill });
+      const result = await ipcService.invoke('save-ui-settings', {
+        showHoldBill,
+        autoPrintBillOnSave,
+        autoPrintKotOnSave,
+      });
       if (!mountedRef.current) return;
       if (!result?.success) {
         setError(result?.message || 'Failed to save feature toggles.');
@@ -89,7 +190,7 @@ function FeatureTogglesTab() {
   }
 
   return (
-    <section className="surface-card rounded-2xl p-5 space-y-4 max-w-lg">
+    <section className="surface-card rounded-2xl p-5 space-y-4 max-w-xl">
       <div>
         <h2 className="text-xl font-black text-on-light">Feature Toggles</h2>
         <p className="text-sm text-muted mt-1">Enable or disable optional behavior in the app.</p>
@@ -100,10 +201,250 @@ function FeatureTogglesTab() {
         <input type="checkbox" checked={showHoldBill} onChange={(e) => setShowHoldBill(e.target.checked)} className="h-4 w-4" />
       </label>
 
+      <label className="flex items-center justify-between gap-3 rounded-lg border border-on-light p-3">
+        <div>
+          <p className="text-sm text-on-light">Auto Print Customer Bill After Save</p>
+          <p className="text-xs text-muted mt-1">Automatically prints the final bill as soon as a bill is saved.</p>
+        </div>
+        <input type="checkbox" checked={autoPrintBillOnSave} onChange={(e) => setAutoPrintBillOnSave(e.target.checked)} className="h-4 w-4" />
+      </label>
+
+      <label className="flex items-center justify-between gap-3 rounded-lg border border-on-light p-3">
+        <div>
+          <p className="text-sm text-on-light">Auto Print KOT After Save</p>
+          <p className="text-xs text-muted mt-1">Automatically prints the kitchen order ticket as soon as a bill is saved.</p>
+        </div>
+        <input type="checkbox" checked={autoPrintKotOnSave} onChange={(e) => setAutoPrintKotOnSave(e.target.checked)} className="h-4 w-4" />
+      </label>
+
       {error ? <p className="text-sm text-error">{error}</p> : null}
       {message ? <p className="text-sm text-success">{message}</p> : null}
 
       <Button onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save Toggles'}</Button>
+    </section>
+  );
+}
+
+function EmployeeManagementTab({ user }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [showAddEmployeeModal, setShowAddEmployeeModal] = useState(false);
+  const addEmployeeNameInputRef = useRef(null);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [form, setForm] = useState({
+    name: '',
+    username: '',
+    email: '',
+    password: '',
+    pin: '',
+    adminPassword: '',
+  });
+  const [pinReset, setPinReset] = useState({ userid: null, pin: '' });
+
+  const loadUsers = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const result = await ipcService.invoke('get-tenant-users');
+      if (!result?.success) {
+        setError(result?.message || 'Could not load users.');
+        setUsers([]);
+        return;
+      }
+      setUsers(Array.isArray(result.users) ? result.users : []);
+    } catch (err) {
+      console.error('Failed to load users:', err);
+      setError('Could not load users.');
+      setUsers([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!user?.isAdmin) {
+      setLoading(false);
+      return;
+    }
+
+    loadUsers();
+  }, [user?.isAdmin]);
+
+  useEffect(() => {
+    if (showAddEmployeeModal) {
+      addEmployeeNameInputRef.current?.focus();
+    }
+  }, [showAddEmployeeModal]);
+
+  const createEmployee = async () => {
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const result = await ipcService.invoke('add-new-user', {
+        ...form,
+        name: form.name.trim(),
+        username: form.username.trim(),
+        email: form.email.trim(),
+        pin: form.pin.trim(),
+        adminPassword: form.adminPassword,
+      });
+
+      if (!result?.success) {
+        setError(result?.message || 'Failed to create employee account.');
+        return;
+      }
+
+      setMessage(result?.message || 'Employee account created.');
+      setForm({ name: '', username: '', email: '', password: '', pin: '', adminPassword: '' });
+      setShowAddEmployeeModal(false);
+      await loadUsers();
+    } catch (err) {
+      console.error('Create employee failed:', err);
+      setError('Failed to create employee account.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resetPin = async () => {
+    if (!pinReset.userid) return;
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const result = await ipcService.invoke('reset-user-pin', {
+        userid: pinReset.userid,
+        newPin: pinReset.pin.trim(),
+        adminPassword: form.adminPassword,
+      });
+
+      if (!result?.success) {
+        setError(result?.message || 'Failed to reset PIN.');
+        return;
+      }
+
+      setMessage(result?.message || 'PIN reset successfully.');
+      setPinReset({ userid: null, pin: '' });
+    } catch (err) {
+      console.error('Reset pin failed:', err);
+      setError('Failed to reset PIN.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!user?.isAdmin) {
+    return (
+      <section className="surface-card rounded-2xl p-5 max-w-lg">
+        <h2 className="text-xl font-black text-on-light">Employee Management</h2>
+        <p className="text-sm text-muted mt-2">Only admins can manage employee accounts and PINs.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="surface-card rounded-2xl p-5 space-y-4">
+      <div>
+        <h2 className="text-xl font-black text-on-light">Employee Accounts</h2>
+        <p className="text-sm text-muted mt-1">Create employee usernames/passwords and assign PINs.</p>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-muted">Use the button to open a focused Add Employee dialog.</p>
+        <Button onClick={() => setShowAddEmployeeModal(true)} disabled={busy}>Add Employee</Button>
+      </div>
+
+      {showAddEmployeeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60" onClick={() => !busy && setShowAddEmployeeModal(false)}>
+          <div className="surface-card w-full max-w-2xl rounded-2xl p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-4">
+              <h3 className="text-lg font-black text-on-light">Add Employee</h3>
+              <p className="text-sm text-muted mt-1">Create a new employee account with username, password, and PIN.</p>
+            </div>
+
+            <form onSubmit={(event) => {
+              event.preventDefault();
+              createEmployee();
+            }}>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <input ref={addEmployeeNameInputRef} value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} className="surface-input h-10 rounded-lg px-3" placeholder="Employee Name" />
+                <input value={form.username} onChange={(e) => setForm((prev) => ({ ...prev, username: e.target.value }))} className="surface-input h-10 rounded-lg px-3" placeholder="Username" />
+                <input type="email" value={form.email} onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))} className="surface-input h-10 rounded-lg px-3" placeholder="Email (optional)" />
+                <input type="password" value={form.password} onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))} className="surface-input h-10 rounded-lg px-3" placeholder="Password (min 6)" />
+                <input value={form.pin} onChange={(e) => setForm((prev) => ({ ...prev, pin: e.target.value.replace(/\D+/g, '').slice(0, 8) }))} className="surface-input h-10 rounded-lg px-3" placeholder="PIN (4-8 digits)" />
+                <input type="password" value={form.adminPassword} onChange={(e) => setForm((prev) => ({ ...prev, adminPassword: e.target.value }))} className="surface-input h-10 rounded-lg px-3" placeholder="Confirm Admin Password" />
+              </div>
+
+              <div className="mt-4 flex justify-end gap-2">
+                <Button type="button" variant="secondary" onClick={() => setShowAddEmployeeModal(false)} disabled={busy}>Cancel</Button>
+                <Button type="submit" disabled={busy}>{busy ? 'Working...' : 'Add Employee'}</Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <p className="text-sm text-muted">Loading users...</p>
+      ) : (
+        <div className="overflow-auto rounded-lg border border-on-light">
+          <table className="w-full min-w-[560px]">
+            <thead className="bg-input border-b border-on-light">
+              <tr>
+                <th className="text-left px-3 py-2 text-xs uppercase text-muted">Name</th>
+                <th className="text-left px-3 py-2 text-xs uppercase text-muted">Username</th>
+                <th className="text-left px-3 py-2 text-xs uppercase text-muted">Role</th>
+                <th className="text-left px-3 py-2 text-xs uppercase text-muted">Reset PIN</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((entry) => (
+                <tr key={entry.userid} className="border-b border-subtle">
+                  <td className="px-3 py-2 text-sm text-on-light">{entry.name}</td>
+                  <td className="px-3 py-2 text-sm text-on-light">{entry.username}</td>
+                  <td className="px-3 py-2 text-sm text-on-light">{entry.isAdmin ? 'Admin' : 'Employee'}</td>
+                  <td className="px-3 py-2 text-sm text-on-light">
+                    <div className="flex gap-2">
+                      <input
+                        value={pinReset.userid === entry.userid ? pinReset.pin : ''}
+                        onChange={(e) => setPinReset({ userid: entry.userid, pin: e.target.value.replace(/\D+/g, '').slice(0, 8) })}
+                        className="surface-input h-9 rounded px-2 w-28"
+                        placeholder="New PIN"
+                      />
+                      <Button
+                        size="sm"
+                        onClick={resetPin}
+                        disabled={busy || pinReset.userid !== entry.userid || !pinReset.pin}
+                      >
+                        Reset
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {error ? <p className="text-sm text-error">{error}</p> : null}
+      {message ? <p className="text-sm text-success">{message}</p> : null}
+    </section>
+  );
+}
+
+function AppControlsTab({ onExitApp }) {
+  return (
+    <section className="surface-card rounded-2xl p-5 space-y-4 max-w-lg">
+      <div>
+        <h2 className="text-xl font-black text-on-light">App Controls</h2>
+        <p className="text-sm text-muted mt-1">Close the application directly from settings.</p>
+      </div>
+
+      <Button type="button" variant="secondary" onClick={onExitApp}>Exit App</Button>
     </section>
   );
 }
@@ -243,6 +584,10 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
 
           {error ? <p className="text-sm text-error xl:col-span-2">{error}</p> : null}
           {message ? <p className="text-sm text-success xl:col-span-2">{message}</p> : null}
+
+          <div className="xl:col-span-2">
+            <EmployeeManagementTab user={user} />
+          </div>
         </div>
       )}
 
@@ -266,14 +611,9 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
         <BackupRestorePage mode="restore" />
       )}
 
-      <section className="surface-card rounded-2xl p-5 space-y-4 max-w-lg">
-        <div>
-          <h2 className="text-xl font-black text-on-light">App Controls</h2>
-          <p className="text-sm text-muted mt-1">Close the application directly from settings.</p>
-        </div>
-
-        <Button type="button" variant="secondary" onClick={handleExitApp}>Exit App</Button>
-      </section>
+      {(activeTab === 'profile' || activeTab === 'exitApp') && (
+        <AppControlsTab onExitApp={handleExitApp} />
+      )}
     </div>
   );
 }

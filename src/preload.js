@@ -32,6 +32,10 @@ const allowedInvokeChannels = new Set([
   'edit-user-profile',
   'change-user-password',
   'show-save-dialog',
+  'get-app-setup-status',
+  'initialize-app-setup',
+  'get-tenant-users',
+  'reset-user-pin',
 ]);
 
 const allowedSendChannels = new Set([

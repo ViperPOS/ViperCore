@@ -4,6 +4,11 @@ const sqlite3 = require('sqlite3').verbose();
 const escpos = require("escpos");
 const fs = require('fs');
 escpos.USB = require("escpos-usb");
+const {
+    compareSecret,
+    hashSecret,
+    normalizeLoginInput,
+} = require('./auth');
 let mainWindow;
 let store; // Will be initialized after dynamic import
 function getLocalDateString(date = new Date()) {
@@ -19,6 +24,8 @@ const resourcesPath = app.isPackaged
     : path.resolve(__dirname, "..", "resources");
 console.log(`Base path: ${basePath}`);
 console.log(`Resources path: ${resourcesPath}`);
+
+const DEFAULT_SUPABASE_PROJECT_URL = 'https://cjkbjnazwewpnzypgber.supabase.co';
 
 // === React + Vite App Loading ===
 function getMainWindowUrl() {
@@ -214,8 +221,12 @@ async function ensureUserTableSchema() {
     const hasIsAdmin = cols.some((col) => col.name === 'isadmin');
     const hasUsername = cols.some((col) => col.name === 'username');
     const hasEmail = cols.some((col) => col.name === 'email');
+    const hasPasswordHash = cols.some((col) => col.name === 'password_hash');
+    const hasPinHash = cols.some((col) => col.name === 'pin_hash');
+    const hasAdminFlag = cols.some((col) => col.name === 'is_admin');
+    const hasActive = cols.some((col) => col.name === 'active');
 
-    // Avoid DROP/RENAME migrations because Orders and other tables reference User(userid).
+    // Add missing columns first so we can safely normalize data before canonical rebuild.
     if (!hasUsername) {
         await dbRunAsync('ALTER TABLE User ADD COLUMN username TEXT');
     }
@@ -224,23 +235,159 @@ async function ensureUserTableSchema() {
         await dbRunAsync('ALTER TABLE User ADD COLUMN email TEXT');
     }
 
-    if (hasIsAdmin || !hasUsername || !hasEmail) {
-        await dbRunAsync(`UPDATE User
-            SET username = COALESCE(
-                NULLIF(TRIM(username), ''),
-                COALESCE(NULLIF(TRIM(uname), ''), 'cashier')
-            )`);
-
-        await dbRunAsync(`UPDATE User
-            SET email = COALESCE(
-                NULLIF(TRIM(email), ''),
-                LOWER(REPLACE(
-                    COALESCE(NULLIF(TRIM(username), ''), COALESCE(NULLIF(TRIM(uname), ''), 'cashier')),
-                    ' ',
-                    ''
-                )) || '@local.user'
-            )`);
+    if (!hasPasswordHash) {
+        await dbRunAsync('ALTER TABLE User ADD COLUMN password_hash TEXT');
     }
+
+    if (!hasPinHash) {
+        await dbRunAsync('ALTER TABLE User ADD COLUMN pin_hash TEXT');
+    }
+
+    if (!hasAdminFlag) {
+        await dbRunAsync('ALTER TABLE User ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0');
+    }
+
+    if (!hasActive) {
+        await dbRunAsync('ALTER TABLE User ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
+    }
+
+    await dbRunAsync(`UPDATE User
+        SET username = LOWER(COALESCE(
+            NULLIF(TRIM(username), ''),
+            COALESCE(NULLIF(TRIM(uname), ''), 'cashier')
+        ))`);
+
+    await dbRunAsync(`UPDATE User
+        SET email = COALESCE(
+            NULLIF(TRIM(email), ''),
+            LOWER(REPLACE(COALESCE(NULLIF(TRIM(username), ''), 'cashier'), ' ', '')) || '@local.user'
+        )`);
+
+    if (hasIsAdmin) {
+        await dbRunAsync(`UPDATE User
+            SET is_admin = COALESCE(is_admin, isadmin, 0)`);
+    }
+
+    await dbRunAsync('UPDATE User SET is_admin = COALESCE(is_admin, 0)');
+    await dbRunAsync('UPDATE User SET active = COALESCE(active, 1)');
+
+    const duplicateRows = await dbAllAsync(`
+        SELECT LOWER(username) AS normalized_username, GROUP_CONCAT(userid) AS ids
+        FROM User
+        GROUP BY LOWER(username)
+        HAVING COUNT(*) > 1
+    `);
+
+    for (const row of duplicateRows) {
+        const ids = String(row.ids || '').split(',').map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0);
+        if (ids.length <= 1) {
+            continue;
+        }
+
+        const baseUsername = String(row.normalized_username || 'cashier').trim() || 'cashier';
+        for (let index = 1; index < ids.length; index += 1) {
+            const userid = ids[index];
+            await dbRunAsync(
+                'UPDATE User SET username = ? WHERE userid = ?',
+                [`${baseUsername}_${userid}`, userid]
+            );
+        }
+    }
+
+    // Canonicalize User table to remove legacy columns like isadmin.
+    try {
+        await dbRunAsync('PRAGMA foreign_keys = OFF');
+        await dbRunAsync('BEGIN TRANSACTION');
+
+        await dbRunAsync(`CREATE TABLE IF NOT EXISTS User_canonical (
+            userid INTEGER PRIMARY KEY AUTOINCREMENT,
+            uname TEXT NOT NULL,
+            username TEXT NOT NULL,
+            email TEXT NOT NULL,
+            password_hash TEXT,
+            pin_hash TEXT,
+            is_admin INTEGER NOT NULL DEFAULT 0,
+            active INTEGER NOT NULL DEFAULT 1
+        )`);
+
+        await dbRunAsync(`INSERT INTO User_canonical (userid, uname, username, email, password_hash, pin_hash, is_admin, active)
+            SELECT
+                userid,
+                COALESCE(NULLIF(TRIM(uname), ''), 'cashier'),
+                LOWER(COALESCE(NULLIF(TRIM(username), ''), COALESCE(NULLIF(TRIM(uname), ''), 'cashier'))),
+                COALESCE(NULLIF(TRIM(email), ''), LOWER(REPLACE(COALESCE(NULLIF(TRIM(username), ''), COALESCE(NULLIF(TRIM(uname), ''), 'cashier')), ' ', '')) || '@local.user'),
+                password_hash,
+                pin_hash,
+                COALESCE(is_admin, 0),
+                COALESCE(active, 1)
+            FROM User`);
+
+        await dbRunAsync('DROP TABLE User');
+        await dbRunAsync('ALTER TABLE User_canonical RENAME TO User');
+        await dbRunAsync('CREATE UNIQUE INDEX IF NOT EXISTS idx_user_username_nocase ON User(username COLLATE NOCASE)');
+
+        await dbRunAsync('COMMIT');
+    } catch (error) {
+        try {
+            await dbRunAsync('ROLLBACK');
+        } catch (_) {
+            // Ignore rollback failures.
+        }
+        throw error;
+    } finally {
+        await dbRunAsync('PRAGMA foreign_keys = ON');
+    }
+}
+
+async function runDatabaseSanityChecks() {
+    const integrityRows = await dbAllAsync('PRAGMA integrity_check');
+    const integrityHasIssue = integrityRows.some((row) => String(row?.integrity_check || '').toLowerCase() !== 'ok');
+    if (integrityHasIssue) {
+        throw new Error(`SQLite integrity_check failed: ${JSON.stringify(integrityRows)}`);
+    }
+
+    const foreignKeyRows = await dbAllAsync('PRAGMA foreign_key_check');
+    if (foreignKeyRows.length > 0) {
+        throw new Error(`SQLite foreign_key_check failed: ${JSON.stringify(foreignKeyRows)}`);
+    }
+}
+
+async function ensureAppSetupSchema() {
+    const cols = await dbAllAsync('PRAGMA table_info(AppSetup)');
+    const hasRemoteProjectUrl = cols.some((col) => col.name === 'remote_project_url');
+    const hasRemoteAnonKey = cols.some((col) => col.name === 'remote_anon_key');
+
+    if (!hasRemoteProjectUrl) {
+        await dbRunAsync('ALTER TABLE AppSetup ADD COLUMN remote_project_url TEXT');
+    }
+
+    if (!hasRemoteAnonKey) {
+        await dbRunAsync('ALTER TABLE AppSetup ADD COLUMN remote_anon_key TEXT');
+    }
+}
+
+async function insertUserRecord({
+    name,
+    username,
+    email,
+    passwordHash = null,
+    pinHash = null,
+    isAdmin = 0,
+    active = 1,
+}) {
+    await dbRunAsync(
+        `INSERT INTO User (uname, username, email, password_hash, pin_hash, is_admin, active)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+            name,
+            String(username || '').trim().toLowerCase(),
+            email,
+            passwordHash,
+            pinHash,
+            isAdmin ? 1 : 0,
+            active ? 1 : 0,
+        ]
+    );
 }
 
 process.on('unhandledRejection', (reason) => {
@@ -266,10 +413,13 @@ async function getOrCreateCashierUser(preferredUsername) {
     }
 
     if (!user) {
-        await dbRunAsync(
-            "INSERT INTO User (uname, username, email) VALUES (?, ?, ?)",
-            [safeName, normalizedUsername, safeEmail]
-        );
+        await insertUserRecord({
+            name: safeName,
+            username: normalizedUsername,
+            email: safeEmail,
+            isAdmin: 0,
+            active: 1,
+        });
         user = await dbGetAsync("SELECT userid, uname, username, email FROM User ORDER BY userid DESC LIMIT 1");
     }
 
@@ -279,6 +429,201 @@ async function getOrCreateCashierUser(preferredUsername) {
         userid: user.userid,
         email: user.email
     };
+}
+
+function isValidPin(pin) {
+    return /^\d{4,8}$/.test(String(pin || ''));
+}
+
+function isValidActivationKeyFormat(keyCode) {
+    return /^[A-Z0-9]{5}(?:-[A-Z0-9]{5}){3,4}$/.test(String(keyCode || '').trim().toUpperCase());
+}
+
+function toSessionUser(row) {
+    return {
+        userid: row.userid,
+        name: row.uname,
+        username: row.username,
+        email: row.email,
+        isAdmin: Number(row.is_admin || 0) === 1,
+    };
+}
+
+async function getAppSetupRow() {
+    return dbGetAsync('SELECT * FROM AppSetup WHERE id = 1');
+}
+
+async function isAppInitialized() {
+    const row = await getAppSetupRow();
+    return Number(row?.is_initialized || 0) === 1;
+}
+
+function getRemoteAuthConfig(setupRow) {
+    const projectUrl = String(setupRow?.remote_project_url || DEFAULT_SUPABASE_PROJECT_URL || '').trim();
+    const anonKey = String(setupRow?.remote_anon_key || '').trim();
+
+    if (!projectUrl || !anonKey) {
+        return null;
+    }
+
+    return {
+        projectUrl,
+        anonKey,
+        functionsBaseUrl: `${projectUrl.replace(/\/+$/, '')}/functions/v1`,
+    };
+}
+
+async function callRemoteAuthFunction(remoteConfig, slug, payload) {
+    if (!remoteConfig?.functionsBaseUrl || !remoteConfig?.anonKey) {
+        throw new Error('Remote auth configuration is missing.');
+    }
+
+    const response = await fetch(`${remoteConfig.functionsBaseUrl}/${slug}`, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${remoteConfig.anonKey}`,
+            apikey: remoteConfig.anonKey,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload || {}),
+    });
+
+    let data = null;
+    try {
+        data = await response.json();
+    } catch (_) {
+        data = null;
+    }
+
+    if (!response.ok || !data?.success) {
+        const message = data?.message || `Remote function ${slug} failed.`;
+        throw new Error(message);
+    }
+
+    return data;
+}
+
+async function ensureLocalUserFromRemote(remoteUser) {
+    const username = String(remoteUser?.username || '').trim().toLowerCase();
+    if (!username) {
+        throw new Error('Remote user payload is invalid.');
+    }
+
+    let localUser = await dbGetAsync(
+        `SELECT userid, uname, username, email, is_admin
+         FROM User
+         WHERE LOWER(username) = LOWER(?)
+         LIMIT 1`,
+        [username]
+    );
+
+    if (!localUser) {
+        await insertUserRecord({
+            name: String(remoteUser?.name || username),
+            username,
+            email: `${username}@local.user`,
+            isAdmin: remoteUser?.isAdmin ? 1 : 0,
+            active: 1,
+        });
+
+        localUser = await dbGetAsync(
+            `SELECT userid, uname, username, email, is_admin
+             FROM User
+             WHERE LOWER(username) = LOWER(?)
+             ORDER BY userid DESC
+             LIMIT 1`,
+            [username]
+        );
+    }
+
+    return toSessionUser(localUser);
+}
+
+async function authenticateByPassword(username, password) {
+    const normalized = String(username || '').trim().toLowerCase();
+    const candidate = await dbGetAsync(
+        `SELECT userid, uname, username, email, is_admin, active, password_hash
+         FROM User
+         WHERE LOWER(username) = LOWER(?) AND active = 1
+         LIMIT 1`,
+        [normalized]
+    );
+
+    if (!candidate || !compareSecret(password, candidate.password_hash)) {
+        return null;
+    }
+
+    return toSessionUser(candidate);
+}
+
+async function authenticateByPin(pin) {
+    const users = await dbAllAsync(
+        `SELECT userid, uname, username, email, is_admin, active, pin_hash
+         FROM User
+         WHERE active = 1 AND pin_hash IS NOT NULL`
+    );
+
+    for (const candidate of users) {
+        if (compareSecret(pin, candidate.pin_hash)) {
+            return toSessionUser(candidate);
+        }
+    }
+
+    return null;
+}
+
+async function authenticateLoginPayload(payload) {
+    const setupRow = await getAppSetupRow();
+    const initialized = await isAppInitialized();
+    if (!initialized) {
+        return null;
+    }
+
+    const method = String(payload?.method || 'password').toLowerCase();
+    const remoteConfig = getRemoteAuthConfig(setupRow);
+    if (remoteConfig) {
+        try {
+            const remoteResult = await callRemoteAuthFunction(remoteConfig, 'login', {
+                tenantId: setupRow.tenant_id,
+                method,
+                username: payload?.username,
+                password: payload?.password,
+                pin: payload?.pin,
+            });
+
+            return await ensureLocalUserFromRemote(remoteResult.user);
+        } catch (remoteError) {
+            console.error('Remote login failed, trying local fallback:', remoteError.message);
+        }
+    }
+
+    if (method === 'pin') {
+        const pin = String(payload?.pin || '');
+        if (!isValidPin(pin)) {
+            return null;
+        }
+        return authenticateByPin(pin);
+    }
+
+    const { username, password } = normalizeLoginInput(payload?.username, payload?.password);
+    if (!username || !password) {
+        return null;
+    }
+
+    return authenticateByPassword(username, password);
+}
+
+async function ensureAdminSession() {
+    const sessionUser = store.get('sessionUser');
+    if (!sessionUser || !sessionUser.userid) {
+        throw new Error('No active session found.');
+    }
+
+    if (!sessionUser.isAdmin) {
+        throw new Error('Admin privileges required.');
+    }
+
+    return sessionUser;
 }
 
 // === Create main window ===
@@ -371,13 +716,9 @@ async function runStartupTasks() {
 
 // === Setup IPC handlers ===
 function setupIPC() {
-  ipcMain.handle("login", async (event, { username, password }) => {
+    ipcMain.handle("login", async (event, payload) => {
     try {
-                        if (!username || !password) {
-        return null;
-      }
-
-                        const user = await getOrCreateCashierUser(username);
+                        const user = await authenticateLoginPayload(payload);
             if (!user) {
                 return null;
             }
@@ -395,6 +736,184 @@ function setupIPC() {
   ipcMain.handle("get-session-user", () => {
     return store.get("sessionUser") || null;
   });
+
+    ipcMain.handle('get-app-setup-status', async () => {
+        try {
+            const setupRow = await getAppSetupRow();
+            const isInitialized = Number(setupRow?.is_initialized || 0) === 1;
+
+            return {
+                isInitialized,
+                setup: isInitialized
+                    ? {
+                            tenantId: setupRow.tenant_id,
+                            tenantName: setupRow.tenant_name,
+                            tenantLocation: setupRow.tenant_location,
+                            contactName: setupRow.contact_name,
+                            contactPhone: setupRow.contact_phone,
+                            contactEmail: setupRow.contact_email,
+                            contactAddress: setupRow.contact_address,
+                            activatedAt: setupRow.activated_at,
+                        }
+                    : null,
+            };
+        } catch (error) {
+            console.error('Failed to read setup status:', error);
+            return { isInitialized: false, setup: null };
+        }
+    });
+
+    ipcMain.handle('initialize-app-setup', async (event, payload) => {
+        try {
+            const alreadyInitialized = await isAppInitialized();
+            if (alreadyInitialized) {
+                return { success: false, message: 'App is already initialized.' };
+            }
+
+            // Setup-only credentials are accepted for one-time provisioning control.
+            // They are intentionally not stored in local database or electron-store.
+            const setupUsername = String(payload?.setupUsername || '').trim();
+            const setupPassword = String(payload?.setupPassword || '');
+            const supabaseProjectUrl = String(payload?.supabaseProjectUrl || DEFAULT_SUPABASE_PROJECT_URL).trim();
+            const supabaseAnonKey = String(payload?.supabaseAnonKey || '').trim();
+
+            const activationKey = String(payload?.activationKey || '').trim().toUpperCase();
+            const masterPin = String(payload?.masterPin || '').trim();
+            const tenantId = String(payload?.tenantId || '').trim();
+            const tenantName = String(payload?.tenantName || '').trim();
+            const tenantLocation = String(payload?.tenantLocation || '').trim();
+            const contactName = String(payload?.contactName || '').trim();
+            const contactPhone = String(payload?.contactPhone || '').trim();
+            const contactEmail = String(payload?.contactEmail || '').trim();
+            const contactAddress = String(payload?.contactAddress || '').trim();
+            const adminName = String(payload?.adminName || '').trim();
+            const adminUsername = String(payload?.adminUsername || '').trim().toLowerCase();
+            const adminPassword = String(payload?.adminPassword || '');
+
+            if (!setupUsername || !setupPassword) {
+                return { success: false, message: 'Setup username and password are required for one-time provisioning.' };
+            }
+
+            if (!supabaseProjectUrl || !supabaseAnonKey) {
+                return { success: false, message: 'Supabase project URL and anon key are required.' };
+            }
+
+            if (!isValidActivationKeyFormat(activationKey)) {
+                return { success: false, message: 'Invalid activation key format.' };
+            }
+
+            if (!tenantId || !tenantName || !tenantLocation || !contactName || !contactPhone) {
+                return { success: false, message: 'Tenant and contact details are required.' };
+            }
+
+            if (!adminName || !adminUsername || adminPassword.length < 6) {
+                return { success: false, message: 'Admin name, username, and password (min 6 chars) are required.' };
+            }
+
+            if (!isValidPin(masterPin)) {
+                return { success: false, message: 'Master PIN must be 4 to 8 digits.' };
+            }
+
+            const remoteConfig = {
+                projectUrl: supabaseProjectUrl,
+                anonKey: supabaseAnonKey,
+                functionsBaseUrl: `${supabaseProjectUrl.replace(/\/+$/, '')}/functions/v1`,
+            };
+
+            await callRemoteAuthFunction(remoteConfig, 'initialize-tenant', {
+                activationKey,
+                tenantId,
+                tenantName,
+                tenantLocation,
+                contactName,
+                contactPhone,
+                contactEmail,
+                contactAddress,
+                masterPin,
+                adminName,
+                adminUsername,
+                adminPassword,
+            });
+
+            const keyRow = await dbGetAsync(
+                'SELECT id, key_code, status FROM ActivationKey WHERE key_code = ? LIMIT 1',
+                [activationKey]
+            );
+
+            if (!keyRow) {
+                await dbRunAsync(
+                    `INSERT INTO ActivationKey (key_code, status, used_by_tenant_id, used_at)
+                     VALUES (?, 'used', ?, datetime('now'))`,
+                    [activationKey, tenantId]
+                );
+            }
+
+            await dbRunAsync('BEGIN TRANSACTION');
+
+            await dbRunAsync(
+                `INSERT INTO AppSetup (
+                    id, is_initialized, activation_key, tenant_id, tenant_name, tenant_location,
+                    contact_name, contact_phone, contact_email, contact_address, master_pin_hash,
+                    remote_project_url, remote_anon_key, activated_at, updated_at
+                ) VALUES (1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+                [
+                    activationKey,
+                    tenantId,
+                    tenantName,
+                    tenantLocation,
+                    contactName,
+                    contactPhone,
+                    contactEmail || null,
+                    contactAddress || null,
+                    hashSecret(masterPin),
+                    supabaseProjectUrl,
+                    supabaseAnonKey,
+                ]
+            );
+
+            await insertUserRecord({
+                name: adminName,
+                username: adminUsername,
+                email: contactEmail || `${adminUsername}@local.user`,
+                passwordHash: hashSecret(adminPassword),
+                pinHash: hashSecret(masterPin),
+                isAdmin: 1,
+                active: 1,
+            });
+
+            const createdUser = await dbGetAsync(
+                `SELECT userid, uname, username, email, is_admin
+                 FROM User
+                 WHERE LOWER(username) = LOWER(?)
+                 ORDER BY userid DESC
+                 LIMIT 1`,
+                [adminUsername]
+            );
+
+            if (keyRow) {
+                await dbRunAsync(
+                    `UPDATE ActivationKey
+                     SET status = 'used', used_by_tenant_id = ?, used_at = datetime('now')
+                     WHERE id = ?`,
+                    [tenantId, keyRow.id]
+                );
+            }
+
+            await dbRunAsync('COMMIT');
+
+            const sessionUser = toSessionUser(createdUser);
+            store.set('sessionUser', sessionUser);
+            return { success: true, user: sessionUser };
+        } catch (error) {
+            try {
+                await dbRunAsync('ROLLBACK');
+            } catch (_) {
+                // Ignore rollback failures.
+            }
+            console.error('Failed to initialize app setup:', error);
+            return { success: false, message: error.message || 'Failed to complete setup.' };
+        }
+    });
 
   ipcMain.handle("logout", async () => {
     try {
@@ -451,18 +970,209 @@ function setupIPC() {
   });
 
   // IPC handler for editing user profile
-  ipcMain.handle("edit-user-profile", async () => {
-    return { success: false, message: "User profile management is disabled for now." };
+    ipcMain.handle("edit-user-profile", async (event, payload) => {
+        try {
+            const sessionUser = store.get('sessionUser');
+            if (!sessionUser?.userid) {
+                return { success: false, message: 'No active session found.' };
+            }
+
+            const userid = Number(payload?.userid);
+            const name = String(payload?.name || '').trim();
+            const username = String(payload?.username || '').trim().toLowerCase();
+            const email = String(payload?.email || '').trim();
+
+            if (!userid || !name || !username) {
+                return { success: false, message: 'Name and username are required.' };
+            }
+
+            if (Number(sessionUser.userid) !== userid && !sessionUser.isAdmin) {
+                return { success: false, message: 'Not allowed to edit this profile.' };
+            }
+
+            const existing = await dbGetAsync(
+                'SELECT userid FROM User WHERE LOWER(username) = LOWER(?) AND userid != ? LIMIT 1',
+                [username, userid]
+            );
+            if (existing) {
+                return { success: false, message: 'Username already in use.' };
+            }
+
+            await dbRunAsync(
+                'UPDATE User SET uname = ?, username = ?, email = ? WHERE userid = ?',
+                [name, username, email || `${username}@local.user`, userid]
+            );
+
+            if (Number(sessionUser.userid) === userid) {
+                const updated = { ...sessionUser, name, username, email: email || `${username}@local.user` };
+                store.set('sessionUser', updated);
+            }
+
+            return { success: true, message: 'Profile updated successfully.' };
+        } catch (error) {
+            console.error('Edit user profile error:', error);
+            return { success: false, message: 'Failed to update profile.' };
+        }
   });
 
   // IPC handler for changing password
-  ipcMain.handle("change-user-password", async () => {
-    return { success: false, message: "Password management is disabled for now." };
+    ipcMain.handle("change-user-password", async (event, payload) => {
+        try {
+            const sessionUser = store.get('sessionUser');
+            if (!sessionUser?.userid) {
+                return { success: false, message: 'No active session found.' };
+            }
+
+            const userid = Number(payload?.userid);
+            const currentPassword = String(payload?.currentPassword || '');
+            const newPassword = String(payload?.newPassword || '');
+
+            if (Number(sessionUser.userid) !== userid) {
+                return { success: false, message: 'Not allowed to change this password.' };
+            }
+
+            if (newPassword.length < 6) {
+                return { success: false, message: 'New password must be at least 6 characters.' };
+            }
+
+            const user = await dbGetAsync('SELECT password_hash FROM User WHERE userid = ? LIMIT 1', [userid]);
+            if (!user || !compareSecret(currentPassword, user.password_hash)) {
+                return { success: false, message: 'Current password is incorrect.' };
+            }
+
+            await dbRunAsync('UPDATE User SET password_hash = ? WHERE userid = ?', [hashSecret(newPassword), userid]);
+            return { success: true, message: 'Password changed successfully.' };
+        } catch (error) {
+            console.error('Change password error:', error);
+            return { success: false, message: 'Failed to change password.' };
+        }
   });
 
   // IPC handler for adding new user
-  ipcMain.handle("add-new-user", async () => {
-    return { success: false, message: "Adding users is disabled for now." };
+    ipcMain.handle("add-new-user", async (event, payload) => {
+        try {
+            const sessionUser = await ensureAdminSession();
+            const setupRow = await getAppSetupRow();
+            const remoteConfig = getRemoteAuthConfig(setupRow);
+
+            const name = String(payload?.name || '').trim();
+            const username = String(payload?.username || '').trim().toLowerCase();
+            const email = String(payload?.email || '').trim();
+            const password = String(payload?.password || '');
+            const pin = String(payload?.pin || '').trim();
+            const adminPassword = String(payload?.adminPassword || '');
+
+            if (!name || !username || password.length < 6 || !isValidPin(pin)) {
+                return { success: false, message: 'Name, username, password (min 6), and PIN (4-8 digits) are required.' };
+            }
+
+            if (remoteConfig && !adminPassword) {
+                return { success: false, message: 'Admin password is required to sync employee to server.' };
+            }
+
+            const existing = await dbGetAsync('SELECT userid FROM User WHERE LOWER(username) = LOWER(?) LIMIT 1', [username]);
+            if (existing) {
+                return { success: false, message: 'Username already exists.' };
+            }
+
+            if (remoteConfig) {
+                await callRemoteAuthFunction(remoteConfig, 'admin-add-employee', {
+                    tenantId: setupRow.tenant_id,
+                    adminUsername: sessionUser.username,
+                    adminPassword,
+                    name,
+                    username,
+                    email,
+                    password,
+                    pin,
+                });
+            }
+
+            await insertUserRecord({
+                name,
+                username,
+                email: email || `${username}@local.user`,
+                passwordHash: hashSecret(password),
+                pinHash: hashSecret(pin),
+                isAdmin: 0,
+                active: 1,
+            });
+
+            return { success: true, message: 'Employee account created.' };
+        } catch (error) {
+            console.error('Add employee user error:', error);
+            return { success: false, message: error.message || 'Failed to add employee.' };
+        }
+    });
+
+    ipcMain.handle('get-tenant-users', async () => {
+        try {
+            await ensureAdminSession();
+            const rows = await dbAllAsync(
+                `SELECT userid, uname, username, email, is_admin, active
+                 FROM User
+                 ORDER BY is_admin DESC, uname ASC`
+            );
+
+            return {
+                success: true,
+                users: rows.map((row) => ({
+                    userid: row.userid,
+                    name: row.uname,
+                    username: row.username,
+                    email: row.email,
+                    isAdmin: Number(row.is_admin || 0) === 1,
+                    active: Number(row.active || 0) === 1,
+                })),
+            };
+        } catch (error) {
+            console.error('Get tenant users error:', error);
+            return { success: false, message: error.message || 'Failed to fetch users.', users: [] };
+        }
+    });
+
+    ipcMain.handle('reset-user-pin', async (event, payload) => {
+        try {
+            const sessionUser = await ensureAdminSession();
+            const setupRow = await getAppSetupRow();
+            const remoteConfig = getRemoteAuthConfig(setupRow);
+
+            const userid = Number(payload?.userid);
+            const newPin = String(payload?.newPin || '').trim();
+            const adminPassword = String(payload?.adminPassword || '');
+
+            if (!userid || !isValidPin(newPin)) {
+                return { success: false, message: 'Valid user and new PIN are required.' };
+            }
+
+            const targetUser = await dbGetAsync(
+                'SELECT username FROM User WHERE userid = ? LIMIT 1',
+                [userid]
+            );
+            if (!targetUser) {
+                return { success: false, message: 'Target user not found.' };
+            }
+
+            if (remoteConfig) {
+                if (!adminPassword) {
+                    return { success: false, message: 'Admin password is required to sync PIN reset to server.' };
+                }
+
+                await callRemoteAuthFunction(remoteConfig, 'admin-reset-pin', {
+                    tenantId: setupRow.tenant_id,
+                    adminUsername: sessionUser.username,
+                    adminPassword,
+                    targetUsername: targetUser.username,
+                    newPin,
+                });
+            }
+
+            await dbRunAsync('UPDATE User SET pin_hash = ? WHERE userid = ?', [hashSecret(newPin), userid]);
+            return { success: true, message: 'PIN reset successfully.' };
+        } catch (error) {
+            console.error('Reset user pin error:', error);
+            return { success: false, message: error.message || 'Failed to reset PIN.' };
+        }
   });
 
   ipcMain.handle("get-printer-config", () => {
@@ -2820,10 +3530,20 @@ ipcMain.handle('load-ui-settings', async () => {
         const parsed = JSON.parse(fileData);
         return {
             showHoldBill: parsed?.showHoldBill !== false,
+            themePreset: parsed?.themePreset === 'classicMono'
+                ? 'classicMono'
+                : parsed?.themePreset === 'navySunburst'
+                    ? 'navySunburst'
+                    : 'creamCharcoal',
+            autoPrintBillOnSave: parsed?.autoPrintBillOnSave === true,
+            autoPrintKotOnSave: parsed?.autoPrintKotOnSave === true,
         };
     } catch (err) {
         return {
             showHoldBill: true,
+            themePreset: 'creamCharcoal',
+            autoPrintBillOnSave: false,
+            autoPrintKotOnSave: false,
         };
     }
 });
@@ -2831,8 +3551,36 @@ ipcMain.handle('load-ui-settings', async () => {
 ipcMain.handle('save-ui-settings', async (event, settings) => {
     try {
         const dataPath = getFilePath('uiSettings.json');
+        let existingSettings = {};
+
+        try {
+            const current = await fs.promises.readFile(dataPath, 'utf-8');
+            existingSettings = JSON.parse(current);
+        } catch (_) {
+            existingSettings = {};
+        }
+
         const nextSettings = {
-            showHoldBill: settings?.showHoldBill !== false,
+            showHoldBill: settings?.showHoldBill !== undefined
+                ? settings.showHoldBill !== false
+                : existingSettings?.showHoldBill !== false,
+            themePreset: settings?.themePreset === 'classicMono'
+                ? 'classicMono'
+                : settings?.themePreset === 'navySunburst'
+                    ? 'navySunburst'
+                    : settings?.themePreset === 'creamCharcoal'
+                        ? 'creamCharcoal'
+                        : (existingSettings?.themePreset === 'classicMono'
+                            ? 'classicMono'
+                            : existingSettings?.themePreset === 'navySunburst'
+                                ? 'navySunburst'
+                                : 'creamCharcoal'),
+            autoPrintBillOnSave: settings?.autoPrintBillOnSave !== undefined
+                ? settings.autoPrintBillOnSave === true
+                : existingSettings?.autoPrintBillOnSave === true,
+            autoPrintKotOnSave: settings?.autoPrintKotOnSave !== undefined
+                ? settings.autoPrintKotOnSave === true
+                : existingSettings?.autoPrintKotOnSave === true,
         };
         await fs.promises.writeFile(dataPath, JSON.stringify(nextSettings, null, 2), 'utf-8');
         return { success: true };
@@ -2925,8 +3673,47 @@ function initializeSchema() {
         userid INTEGER PRIMARY KEY AUTOINCREMENT,
         uname TEXT NOT NULL,
         username TEXT NOT NULL,
-                                email TEXT NOT NULL
+                email TEXT NOT NULL,
+                password_hash TEXT,
+                pin_hash TEXT,
+                is_admin INTEGER NOT NULL DEFAULT 0,
+                active INTEGER NOT NULL DEFAULT 1
       )`);
+
+            db.run(`CREATE TABLE IF NOT EXISTS AppSetup (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                is_initialized INTEGER NOT NULL DEFAULT 0,
+                activation_key TEXT,
+                tenant_id TEXT,
+                tenant_name TEXT,
+                tenant_location TEXT,
+                contact_name TEXT,
+                contact_phone TEXT,
+                contact_email TEXT,
+                contact_address TEXT,
+                master_pin_hash TEXT,
+                remote_project_url TEXT,
+                remote_anon_key TEXT,
+                activated_at TEXT,
+                updated_at TEXT
+            )`);
+
+            db.run(`CREATE TABLE IF NOT EXISTS ActivationKey (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key_code TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'available',
+                used_by_tenant_id TEXT,
+                used_at TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                CHECK (status IN ('available', 'reserved', 'used', 'revoked'))
+            )`);
+
+            db.run(`INSERT OR IGNORE INTO ActivationKey (key_code, status) VALUES
+                ('LCP7F-3K9QW-2M8DX-5R4TN', 'available'),
+                ('LCP4J-8V2NP-6Q5XT-9H3RA', 'available'),
+                ('LCP9M-1C7LK-4Z8YD-2F6WS', 'available'),
+                ('LCP5X-6R3HJ-9B1QT-7N4PD', 'available'),
+                ('LCP8A-2W5VF-3N9CM-6K7ZX', 'available')`);
   
             db.run(`CREATE TABLE IF NOT EXISTS FoodItem (
         fid INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3020,11 +3807,16 @@ function initializeSchema() {
 
                         db.run(`DROP TABLE IF EXISTS Miscellaneous`);
 
-                        ensureUserTableSchema()
-                            .then(() => getOrCreateCashierUser('cashier'))
-                            .catch((schemaErr) => {
-                            console.error("Error preparing local user schema:", schemaErr);
-                        });
+                        (async () => {
+                            try {
+                                await ensureUserTableSchema();
+                                await ensureAppSetupSchema();
+                                await runDatabaseSanityChecks();
+                                console.log('✅ Database sanity check passed.');
+                            } catch (schemaErr) {
+                                console.error('Error preparing local database schema:', schemaErr);
+                            }
+                        })();
 
                 db.all(`PRAGMA table_info(FoodItem)`, [], (err, columns) => {
                     if (err) {

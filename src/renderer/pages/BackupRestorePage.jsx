@@ -47,7 +47,7 @@ export default function BackupRestorePage({ mode }) {
       </div>
 
       {!isBackup && (
-        <div className="rounded-lg border border-on-light p-3 text-sm" style={{ background: 'rgba(208, 201, 195, 0.22)', color: 'var(--text-on-light)' }}>
+        <div className="rounded-lg border border-on-light p-3 text-sm" style={{ background: 'var(--bg-hover)', color: 'var(--text-on-light)' }}>
           Restoring will overwrite your current database. Make sure you have a backup before proceeding.
         </div>
       )}

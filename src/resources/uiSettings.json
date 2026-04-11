@@ -1,3 +1,6 @@
 {
-  "showHoldBill": true
+  "showHoldBill": false,
+  "themePreset": "navySunburst",
+  "autoPrintBillOnSave": false,
+  "autoPrintKotOnSave": false
 }

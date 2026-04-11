@@ -3,17 +3,28 @@ import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/dialogs';
 import ipcService from '@/services/ipcService';
 
-function ItemForm({ categories, initial, onSubmit, onCancel, busy, label }) {
+function ItemForm({ categories, initial, onPreviewChange, onSubmit, onCancel, busy, label }) {
   const [fname, setFname] = useState(initial?.fname ?? '');
   const [category, setCategory] = useState(initial?.category ?? categories[0]?.catid ?? '');
   const [cost, setCost] = useState(initial?.cost ?? '');
   const [sgst, setSgst] = useState(initial?.sgst ?? '0');
   const [cgst, setCgst] = useState(initial?.cgst ?? '0');
   const [veg, setVeg] = useState(initial?.veg ?? 1);
+
+  useEffect(() => {
+    setFname(initial?.fname ?? '');
+    setCategory(initial?.category ?? categories[0]?.catid ?? '');
+    setCost(initial?.cost ?? '');
+    setSgst(initial?.sgst ?? '0');
+    setCgst(initial?.cgst ?? '0');
+    setVeg(initial?.veg ?? 1);
+  }, [initial, categories]);
+
   const handleSubmit = (e) => {
     e.preventDefault();
     onSubmit({ fname: fname.trim(), category: Number(category), cost: Number(cost || 0), sgst: Number(sgst || 0), cgst: Number(cgst || 0), veg: Number(veg) });
   };
+
   const inputStyle = {
     backgroundColor: 'var(--bg-input)',
     color: 'var(--text-on-light)',
@@ -26,29 +37,65 @@ function ItemForm({ categories, initial, onSubmit, onCancel, busy, label }) {
     >
       <div className="sm:col-span-2">
         <label className="block text-xs uppercase mb-1" style={{ color: 'var(--text-muted)' }}>Name *</label>
-        <input value={fname} onChange={(e) => setFname(e.target.value)} required style={inputStyle} className="h-10 w-full rounded-lg px-3 text-sm" />
+        <input value={fname} onChange={(e) => {
+          const value = e.target.value;
+          setFname(value);
+          if (typeof onPreviewChange === 'function') {
+            onPreviewChange({ fname: value, category, cost, sgst, cgst, veg });
+          }
+        }} required style={inputStyle} className="h-10 w-full rounded-lg px-3 text-sm" />
       </div>
       <div>
         <label className="block text-xs uppercase mb-1" style={{ color: 'var(--text-muted)' }}>Category</label>
-        <select value={category} onChange={(e) => setCategory(e.target.value)} style={inputStyle} className="h-10 w-full rounded-lg px-3 text-sm">
+        <select value={category} onChange={(e) => {
+          const value = e.target.value;
+          setCategory(value);
+          if (typeof onPreviewChange === 'function') {
+            onPreviewChange({ fname, category: value, cost, sgst, cgst, veg });
+          }
+        }} style={inputStyle} className="h-10 w-full rounded-lg px-3 text-sm">
           {categories.map((c) => <option key={c.catid} value={c.catid}>{c.catname}</option>)}
         </select>
       </div>
       <div>
         <label className="block text-xs uppercase mb-1" style={{ color: 'var(--text-muted)' }}>Cost</label>
-        <input type="number" min="0" step="0.01" value={cost} onChange={(e) => setCost(e.target.value)} style={inputStyle} className="h-10 w-full rounded-lg px-3 text-sm" />
+        <input type="number" min="0" step="0.01" value={cost} onChange={(e) => {
+          const value = e.target.value;
+          setCost(value);
+          if (typeof onPreviewChange === 'function') {
+            onPreviewChange({ fname, category, cost: value, sgst, cgst, veg });
+          }
+        }} style={inputStyle} className="h-10 w-full rounded-lg px-3 text-sm" />
       </div>
       <div>
         <label className="block text-xs uppercase mb-1" style={{ color: 'var(--text-muted)' }}>SGST</label>
-        <input type="number" min="0" step="0.01" value={sgst} onChange={(e) => setSgst(e.target.value)} style={inputStyle} className="h-10 w-full rounded-lg px-3 text-sm" />
+        <input type="number" min="0" step="0.01" value={sgst} onChange={(e) => {
+          const value = e.target.value;
+          setSgst(value);
+          if (typeof onPreviewChange === 'function') {
+            onPreviewChange({ fname, category, cost, sgst: value, cgst, veg });
+          }
+        }} style={inputStyle} className="h-10 w-full rounded-lg px-3 text-sm" />
       </div>
       <div>
         <label className="block text-xs uppercase mb-1" style={{ color: 'var(--text-muted)' }}>CGST</label>
-        <input type="number" min="0" step="0.01" value={cgst} onChange={(e) => setCgst(e.target.value)} style={inputStyle} className="h-10 w-full rounded-lg px-3 text-sm" />
+        <input type="number" min="0" step="0.01" value={cgst} onChange={(e) => {
+          const value = e.target.value;
+          setCgst(value);
+          if (typeof onPreviewChange === 'function') {
+            onPreviewChange({ fname, category, cost, sgst, cgst: value, veg });
+          }
+        }} style={inputStyle} className="h-10 w-full rounded-lg px-3 text-sm" />
       </div>
       <div>
         <label className="block text-xs uppercase mb-1" style={{ color: 'var(--text-muted)' }}>Type</label>
-        <select value={veg} onChange={(e) => setVeg(Number(e.target.value))} style={inputStyle} className="h-10 w-full rounded-lg px-3 text-sm">
+        <select value={veg} onChange={(e) => {
+          const value = Number(e.target.value);
+          setVeg(value);
+          if (typeof onPreviewChange === 'function') {
+            onPreviewChange({ fname, category, cost, sgst, cgst, veg: value });
+          }
+        }} style={inputStyle} className="h-10 w-full rounded-lg px-3 text-sm">
           <option value={1}>VEG</option>
           <option value={0}>NON-VEG</option>
         </select>
@@ -62,6 +109,30 @@ function ItemForm({ categories, initial, onSubmit, onCancel, busy, label }) {
 }
 
 function ItemModal({ title, categories, initial, onSubmit, onClose, busy, label }) {
+  const [preview, setPreview] = useState({
+    fname: initial?.fname ?? '',
+    category: initial?.category ?? categories[0]?.catid ?? '',
+    cost: initial?.cost ?? '',
+    sgst: initial?.sgst ?? '0',
+    cgst: initial?.cgst ?? '0',
+    veg: initial?.veg ?? 1,
+  });
+
+  useEffect(() => {
+    setPreview({
+      fname: initial?.fname ?? '',
+      category: initial?.category ?? categories[0]?.catid ?? '',
+      cost: initial?.cost ?? '',
+      sgst: initial?.sgst ?? '0',
+      cgst: initial?.cgst ?? '0',
+      veg: initial?.veg ?? 1,
+    });
+  }, [initial, categories]);
+
+  const handlePreviewChange = (nextValues) => {
+    setPreview((prev) => ({ ...prev, ...nextValues }));
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60" onClick={onClose}>
       <div
@@ -82,6 +153,7 @@ function ItemModal({ title, categories, initial, onSubmit, onClose, busy, label 
             <ItemForm
               categories={categories}
               initial={initial}
+              onPreviewChange={handlePreviewChange}
               onSubmit={onSubmit}
               onCancel={onClose}
               busy={busy}
@@ -93,16 +165,28 @@ function ItemModal({ title, categories, initial, onSubmit, onClose, busy, label 
             <div>
               <p className="text-xs uppercase tracking-[0.2em] text-muted">Quick Preview</p>
               <div className="mt-3 rounded-xl border border-on-light bg-[var(--bg-card)] p-4 space-y-2">
-                <p className="text-lg font-black text-on-light">{initial?.fname || 'Item Name'}</p>
-                <p className="text-sm text-muted">Category: {categories.find((c) => Number(c.catid) === Number(initial?.category))?.catname ?? 'Choose a category'}</p>
+                <p className="text-lg font-black text-on-light">{preview?.fname || 'Item Name'}</p>
+                <p className="text-sm text-muted">Category: {categories.find((c) => Number(c.catid) === Number(preview?.category))?.catname ?? 'Choose a category'}</p>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-muted">Price</span>
-                  <span className="font-semibold text-on-light">Rs. {Number(initial?.cost || 0).toFixed(2)}</span>
+                  <span className="font-semibold text-on-light">Rs. {Number(preview?.cost || 0).toFixed(2)}</span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted">SGST</span>
+                  <span className="font-semibold text-on-light">{Number(preview?.sgst || 0).toFixed(2)}%</span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted">CGST</span>
+                  <span className="font-semibold text-on-light">{Number(preview?.cgst || 0).toFixed(2)}%</span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted">Total Tax</span>
+                  <span className="font-semibold text-on-light">{(Number(preview?.sgst || 0) + Number(preview?.cgst || 0)).toFixed(2)}%</span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-muted">Type</span>
-                  <span className="inline-flex w-20 justify-center rounded-full px-2 py-1 text-xs font-semibold text-on-dark" style={{ backgroundColor: Number(initial?.veg) ? 'var(--color-a)' : 'var(--color-b)' }}>
-                    {Number(initial?.veg) ? 'VEG' : 'NON-VEG'}
+                  <span className="inline-flex w-20 justify-center rounded-full px-2 py-1 text-xs font-semibold text-on-dark" style={{ backgroundColor: Number(preview?.veg) ? 'var(--color-a)' : 'var(--color-b)' }}>
+                    {Number(preview?.veg) ? 'VEG' : 'NON-VEG'}
                   </span>
                 </div>
               </div>

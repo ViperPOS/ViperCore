@@ -11,7 +11,7 @@ export default {
         warmGray: '#D0C9C3',
         signalRed: '#FF073A',
         ink: '#131211',
-        black: '#000000',
+        black: '#262424',
       },
     },
   },

@@ -41,6 +41,7 @@ const navSections = [
     { key: 'businessInfo',  label: 'Business Info' },
     { key: 'backup',        label: 'Backup Database' },
     { key: 'restore',       label: 'Restore Database' },
+    { key: 'exitApp',       label: 'Exit App' },
   ]},
 ];
 
@@ -63,7 +64,7 @@ function SidebarNav({ sections, activeView, activeSubView, expandedView, onNavCl
                 opacity: isActive ? 1 : 0.6,
                 fontWeight: isActive ? 600 : 400,
                 width: 'calc(100% - 16px)',
-                border: isActive ? '1px solid rgba(255, 255, 255, 0.35)' : '1px solid transparent',
+                border: isActive ? '1px solid var(--border-on-dark)' : '1px solid transparent',
               }}
             >
               <Icon size={20} strokeWidth={isActive ? 2.5 : 1.5} />
@@ -89,7 +90,7 @@ function SidebarNav({ sections, activeView, activeSubView, expandedView, onNavCl
                         color: 'var(--text-on-dark)',
                         opacity: subActive ? 1 : 0.45,
                         fontWeight: subActive ? 500 : 400,
-                        borderLeft: subActive ? '2px solid #FFFFFF' : '2px solid transparent',
+                        borderLeft: subActive ? '2px solid var(--text-on-dark)' : '2px solid transparent',
                       }}
                     >
                       {sub.label}
@@ -164,16 +165,16 @@ export default function DashboardPage({ user, onLogout }) {
 
   return (
     <div
-      className="min-h-screen flex"
+      className="h-screen flex overflow-hidden"
       style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-on-light)' }}
     >
       {/* Sidebar */}
       <aside
-        className="w-72 flex flex-col shrink-0"
-        style={{ backgroundColor: 'var(--bg-sidebar)', borderRight: '1px solid rgba(208, 201, 195, 0.25)' }}
+        className="w-72 flex flex-col shrink-0 h-full overflow-hidden"
+        style={{ backgroundColor: 'var(--bg-sidebar)', borderRight: '1px solid var(--border-on-dark)' }}
       >
         {/* Brand */}
-        <div className="px-6 py-6" style={{ borderBottom: '1px solid rgba(208, 201, 195, 0.25)' }}>
+        <div className="px-6 py-6" style={{ borderBottom: '1px solid var(--border-on-dark)' }}>
           <p className="text-sm font-bold tracking-[0.15em]" style={{ color: 'var(--text-on-dark)' }}>
             Lassi Corner POS
           </p>
@@ -192,7 +193,7 @@ export default function DashboardPage({ user, onLogout }) {
         />
 
         {/* Sign out */}
-        <div className="px-4 py-4" style={{ borderTop: '1px solid rgba(208, 201, 195, 0.25)' }}>
+        <div className="px-4 py-4" style={{ borderTop: '1px solid var(--border-on-dark)' }}>
           <button
             onClick={onLogout}
             className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-all"
@@ -205,7 +206,7 @@ export default function DashboardPage({ user, onLogout }) {
       </aside>
 
       {/* Main */}
-      <main className="flex-1 overflow-y-auto" style={{ backgroundColor: 'var(--bg-app)' }}>
+      <main className="flex-1 h-full overflow-y-auto" style={{ backgroundColor: 'var(--bg-app)' }}>
         {/* Top bar */}
         <header
           className="px-8 py-4 flex items-center justify-between sticky top-0 z-10"
