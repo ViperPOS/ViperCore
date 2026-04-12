@@ -11,6 +11,9 @@ const allowedInvokeChannels = new Set([
   'get-categories',
   'get-menu-items',
   'get-categories-for-additem',
+  'create-category',
+  'update-category',
+  'toggle-category-active',
   'add-food-item',
   'update-food-item',
   'delete-menu-item',
@@ -36,6 +39,10 @@ const allowedInvokeChannels = new Set([
   'initialize-app-setup',
   'get-tenant-users',
   'reset-user-pin',
+  'get-billing-tables',
+  'create-billing-table',
+  'update-billing-table',
+  'delete-billing-table',
 ]);
 
 const allowedSendChannels = new Set([
@@ -49,6 +56,7 @@ const allowedSendChannels = new Set([
   'restore-database-local',
   'save-business-info',
   'get-categories-event',
+  'categories-updated',
   'get-order-history',
   'get-customers',
   'add-customer',

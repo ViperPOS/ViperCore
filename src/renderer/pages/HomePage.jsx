@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import ipcService from '@/services/ipcService';
 
@@ -41,27 +41,49 @@ export default function HomePage() {
   const [loadingItems, setLoadingItems] = useState(false);
   const [error, setError] = useState('');
 
+  const loadCategories = useCallback(async () => {
+    setLoadingCategories(true);
+    setError('');
+    try {
+      const data = await ipcService.invoke('get-categories');
+      const safe = Array.isArray(data) ? data : [];
+      setCategories(safe);
+      setSelectedCategory((prev) => {
+        if (prev && safe.some((category) => category.catname === prev)) {
+          return prev;
+        }
+        return safe[0]?.catname ?? '';
+      });
+    } catch (fetchError) {
+      console.error('Failed to load categories:', fetchError);
+      setError('Could not load categories.');
+    } finally {
+      setLoadingCategories(false);
+    }
+  }, []);
+
   useEffect(() => {
     let mounted = true;
-    const loadCategories = async () => {
-      setLoadingCategories(true);
-      setError('');
-      try {
-        const data = await ipcService.invoke('get-categories');
-        if (!mounted) return;
-        const safe = Array.isArray(data) ? data : [];
-        setCategories(safe);
-        if (safe.length > 0) setSelectedCategory(safe[0].catname);
-      } catch (fetchError) {
-        console.error('Failed to load categories:', fetchError);
-        if (mounted) setError('Could not load categories.');
-      } finally {
-        if (mounted) setLoadingCategories(false);
+    const syncCategories = async () => {
+      await loadCategories();
+    };
+
+    syncCategories();
+
+    const handleCategoriesUpdated = () => {
+      if (mounted) {
+        syncCategories();
       }
     };
-    loadCategories();
-    return () => { mounted = false; };
-  }, []);
+
+    const wrapped = ipcService.on('categories-updated', handleCategoriesUpdated);
+    return () => {
+      mounted = false;
+      if (wrapped) {
+        ipcService.removeListener('categories-updated', handleCategoriesUpdated);
+      }
+    };
+  }, [loadCategories]);
 
   useEffect(() => {
     if (!selectedCategory) { setItems([]); return; }
@@ -122,22 +144,24 @@ export default function HomePage() {
         className="rounded-2xl p-4 md:p-5"
         style={{ backgroundColor: 'var(--bg-card)', border: '1.5px solid var(--border-on-light)' }}
       >
-        <div className="flex flex-wrap items-center gap-2">
-          {loadingCategories && <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading categories...</p>}
-          {!loadingCategories && categories.length === 0 && <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No categories found.</p>}
-          {categories.map((category) => {
-            const active = selectedCategory === category.catname;
-            return (
-              <Button
-                key={category.catid ?? category.catname}
-                variant={active ? 'default' : 'secondary'}
-                size="sm"
-                onClick={() => setSelectedCategory(category.catname ?? '')}
-              >
-                {category.catname ?? 'Unknown'}
-              </Button>
-            );
-          })}
+        <div className="overflow-x-auto pb-1">
+          <div className="flex flex-nowrap items-center gap-2 min-w-max">
+            {loadingCategories && <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading categories...</p>}
+            {!loadingCategories && categories.length === 0 && <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No categories found.</p>}
+            {categories.map((category) => {
+              const active = selectedCategory === category.catname;
+              return (
+                <Button
+                  key={category.catid ?? category.catname}
+                  variant={active ? 'default' : 'secondary'}
+                  size="sm"
+                  onClick={() => setSelectedCategory(category.catname ?? '')}
+                >
+                  {category.catname ?? 'Unknown'}
+                </Button>
+              );
+            })}
+          </div>
         </div>
       </section>
 

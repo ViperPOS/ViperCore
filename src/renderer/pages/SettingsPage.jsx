@@ -133,6 +133,7 @@ function FeatureTogglesTab() {
   const [showHoldBill, setShowHoldBill] = useState(true);
   const [autoPrintBillOnSave, setAutoPrintBillOnSave] = useState(false);
   const [autoPrintKotOnSave, setAutoPrintKotOnSave] = useState(false);
+  const [enableTableSelection, setEnableTableSelection] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -151,6 +152,7 @@ function FeatureTogglesTab() {
         setShowHoldBill(settings?.showHoldBill !== false);
         setAutoPrintBillOnSave(settings?.autoPrintBillOnSave === true);
         setAutoPrintKotOnSave(settings?.autoPrintKotOnSave === true);
+        setEnableTableSelection(settings?.enableTableSelection === true);
       } catch (loadError) {
         if (mountedRef.current) setError('Could not load feature toggles.');
       } finally {
@@ -171,6 +173,7 @@ function FeatureTogglesTab() {
         showHoldBill,
         autoPrintBillOnSave,
         autoPrintKotOnSave,
+        enableTableSelection,
       });
       if (!mountedRef.current) return;
       if (!result?.success) {
@@ -215,6 +218,14 @@ function FeatureTogglesTab() {
           <p className="text-xs text-muted mt-1">Automatically prints the kitchen order ticket as soon as a bill is saved.</p>
         </div>
         <input type="checkbox" checked={autoPrintKotOnSave} onChange={(e) => setAutoPrintKotOnSave(e.target.checked)} className="h-4 w-4" />
+      </label>
+
+      <label className="flex items-center justify-between gap-3 rounded-lg border border-on-light p-3">
+        <div>
+          <p className="text-sm text-on-light">Enable Table Selection In Billing</p>
+          <p className="text-xs text-muted mt-1">Shows a Select Table button in Billing and enables table assignment + table management modal.</p>
+        </div>
+        <input type="checkbox" checked={enableTableSelection} onChange={(e) => setEnableTableSelection(e.target.checked)} className="h-4 w-4" />
       </label>
 
       {error ? <p className="text-sm text-error">{error}</p> : null}

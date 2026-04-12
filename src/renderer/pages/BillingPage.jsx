@@ -19,6 +19,117 @@ function formatCurrency(value) {
 const BILL_TIMEOUT_MS = 15000;
 const BILLING_DRAFT_KEY = 'billingDraft:v1';
 
+function formatTableLabel(table) {
+  if (!table) return 'No table selected';
+  const tableNumber = String(table.tableNumber || '').trim();
+  const tableName = String(table.tableName || '').trim();
+  if (tableNumber && tableName) {
+    return `Table ${tableNumber} - ${tableName}`;
+  }
+  if (tableNumber) {
+    return `Table ${tableNumber}`;
+  }
+  if (tableName) {
+    return tableName;
+  }
+  return 'No table selected';
+}
+
+function TableSelectionModal({
+  open,
+  tables,
+  selectedTable,
+  loading,
+  busy,
+  form,
+  setForm,
+  onClose,
+  onSelect,
+  onSave,
+  onEdit,
+  onDelete,
+}) {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+      <div className="surface-card rounded-2xl w-full max-w-3xl max-h-[85vh] overflow-y-auto p-5 space-y-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-black text-on-light">Select Table</h3>
+            <p className="text-sm text-muted mt-1">Assign this bill to a table and manage your table list.</p>
+          </div>
+          <Button type="button" variant="secondary" onClick={onClose}>Close</Button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <section className="rounded-xl border border-on-light p-3 space-y-3">
+            <h4 className="text-sm font-bold text-on-light">Available Tables</h4>
+            {loading ? <p className="text-sm text-muted">Loading tables...</p> : null}
+            {!loading && tables.length === 0 ? <p className="text-sm text-muted">No tables found.</p> : null}
+            <div className="space-y-2 max-h-[340px] overflow-auto pr-1">
+              {tables.map((table) => {
+                const isActive = Number(selectedTable?.tableId) === Number(table.tableId);
+                return (
+                  <div key={table.tableId} className="rounded-lg border border-on-light p-2 space-y-2">
+                    <button
+                      type="button"
+                      className="w-full text-left"
+                      onClick={() => onSelect(table)}
+                    >
+                      <p className="text-sm font-semibold text-on-light">{formatTableLabel(table)}</p>
+                      {isActive ? <p className="text-xs text-success mt-1">Selected</p> : null}
+                    </button>
+                    <div className="flex gap-2">
+                      <Button type="button" size="sm" variant="secondary" onClick={() => onEdit(table)} disabled={busy}>Edit</Button>
+                      <Button type="button" size="sm" variant="ghost" onClick={() => onDelete(table)} disabled={busy}>Delete</Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="rounded-xl border border-on-light p-3 space-y-3">
+            <h4 className="text-sm font-bold text-on-light">Edit Tables</h4>
+            <div>
+              <label className="text-xs uppercase text-muted mb-1 block">Table Number</label>
+              <input
+                value={form.tableNumber}
+                onChange={(e) => setForm((prev) => ({ ...prev, tableNumber: e.target.value }))}
+                className="surface-input h-10 w-full rounded-lg px-3"
+                placeholder="1"
+              />
+            </div>
+            <div>
+              <label className="text-xs uppercase text-muted mb-1 block">Table Name</label>
+              <input
+                value={form.tableName}
+                onChange={(e) => setForm((prev) => ({ ...prev, tableName: e.target.value }))}
+                className="surface-input h-10 w-full rounded-lg px-3"
+                placeholder="Window / Patio / Family"
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button type="button" onClick={onSave} disabled={busy}>
+                {form.tableId ? 'Update Table' : 'Add Table'}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setForm({ tableId: null, tableNumber: '', tableName: '' })}
+                disabled={busy}
+              >
+                Clear
+              </Button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function BillingPage({ user }) {
   const [categories, setCategories] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('');
@@ -37,7 +148,14 @@ export default function BillingPage({ user }) {
   const [showHoldBill, setShowHoldBill] = useState(true);
   const [autoPrintBillOnSave, setAutoPrintBillOnSave] = useState(false);
   const [autoPrintKotOnSave, setAutoPrintKotOnSave] = useState(false);
+  const [enableTableSelection, setEnableTableSelection] = useState(false);
   const [lastBill, setLastBill] = useState(null);
+  const [tables, setTables] = useState([]);
+  const [selectedTable, setSelectedTable] = useState(null);
+  const [tableModalOpen, setTableModalOpen] = useState(false);
+  const [tableLoading, setTableLoading] = useState(false);
+  const [tableBusy, setTableBusy] = useState(false);
+  const [tableForm, setTableForm] = useState({ tableId: null, tableNumber: '', tableName: '' });
   const mountedRef = useRef(true);
   const billTimerRef = useRef(null);
   const draftLoadedRef = useRef(false);
@@ -55,6 +173,9 @@ export default function BillingPage({ user }) {
         if (typeof draft?.discountAmount === 'string') setDiscountAmount(draft.discountAmount);
         if (typeof draft?.itemSearch === 'string') setItemSearch(draft.itemSearch);
         if (typeof draft?.selectedCategory === 'string') setSelectedCategory(draft.selectedCategory);
+        if (draft?.selectedTable && typeof draft.selectedTable === 'object') {
+          setSelectedTable(draft.selectedTable);
+        }
       }
     } catch (err) {
       console.error('Failed to restore billing draft:', err);
@@ -74,12 +195,13 @@ export default function BillingPage({ user }) {
           discountAmount,
           itemSearch,
           selectedCategory,
+          selectedTable,
         })
       );
     } catch (err) {
       console.error('Failed to persist billing draft:', err);
     }
-  }, [cart, discountPercent, discountAmount, itemSearch, selectedCategory]);
+  }, [cart, discountPercent, discountAmount, itemSearch, selectedCategory, selectedTable]);
 
   const loadCategories = async () => {
     setLoading(true);
@@ -89,9 +211,12 @@ export default function BillingPage({ user }) {
       if (!mountedRef.current) return;
       const safeCategories = Array.isArray(result?.categories) ? result.categories : [];
       setCategories(safeCategories);
-      if (safeCategories.length > 0) {
-        setSelectedCategory((prev) => prev || (safeCategories[0]?.catname ?? ''));
-      }
+      setSelectedCategory((prev) => {
+        if (prev && safeCategories.some((category) => category.catname === prev)) {
+          return prev;
+        }
+        return safeCategories[0]?.catname ?? '';
+      });
     } catch (fetchError) {
       console.error('Failed loading categories:', fetchError);
       if (mountedRef.current) setError('Could not load categories.');
@@ -150,6 +275,19 @@ export default function BillingPage({ user }) {
   }, []);
 
   useEffect(() => {
+    const handleCategoriesUpdated = () => {
+      loadCategories();
+    };
+
+    const wrapped = ipcService.on('categories-updated', handleCategoriesUpdated);
+    return () => {
+      if (wrapped) {
+        ipcService.removeListener('categories-updated', handleCategoriesUpdated);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     let active = true;
     const loadUiSettings = async () => {
       try {
@@ -158,11 +296,13 @@ export default function BillingPage({ user }) {
         setShowHoldBill(settings?.showHoldBill !== false);
         setAutoPrintBillOnSave(settings?.autoPrintBillOnSave === true);
         setAutoPrintKotOnSave(settings?.autoPrintKotOnSave === true);
+        setEnableTableSelection(settings?.enableTableSelection === true);
       } catch (err) {
         if (active) {
           setShowHoldBill(true);
           setAutoPrintBillOnSave(false);
           setAutoPrintKotOnSave(false);
+          setEnableTableSelection(false);
         }
       }
     };
@@ -174,6 +314,108 @@ export default function BillingPage({ user }) {
     autoPrintBillOnSaveRef.current = autoPrintBillOnSave;
     autoPrintKotOnSaveRef.current = autoPrintKotOnSave;
   }, [autoPrintBillOnSave, autoPrintKotOnSave]);
+
+  const loadBillingTables = async () => {
+    setTableLoading(true);
+    try {
+      const result = await ipcService.invoke('get-billing-tables');
+      if (!result?.success) {
+        setError(result?.message || 'Could not load tables.');
+        setTables([]);
+        return;
+      }
+
+      const nextTables = Array.isArray(result.tables) ? result.tables : [];
+      setTables(nextTables);
+      setSelectedTable((previous) => {
+        if (!previous?.tableId) return previous;
+        const latest = nextTables.find((table) => Number(table.tableId) === Number(previous.tableId));
+        return latest || null;
+      });
+    } catch (err) {
+      console.error('Failed to load billing tables:', err);
+      setError('Could not load tables.');
+      setTables([]);
+    } finally {
+      setTableLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!enableTableSelection) {
+      setTableModalOpen(false);
+      return;
+    }
+    loadBillingTables();
+  }, [enableTableSelection]);
+
+  const openTableModal = async () => {
+    setError('');
+    setMessage('');
+    setTableModalOpen(true);
+    await loadBillingTables();
+  };
+
+  const saveTable = async () => {
+    const tableNumber = String(tableForm.tableNumber || '').trim();
+    const tableName = String(tableForm.tableName || '').trim();
+    if (!tableNumber || !tableName) {
+      setError('Table name and number are required.');
+      return;
+    }
+
+    setTableBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const channel = tableForm.tableId ? 'update-billing-table' : 'create-billing-table';
+      const payload = tableForm.tableId
+        ? { tableId: tableForm.tableId, tableName, tableNumber }
+        : { tableName, tableNumber };
+      const result = await ipcService.invoke(channel, payload);
+      if (!result?.success) {
+        setError(result?.message || 'Could not save table.');
+        return;
+      }
+
+      setTableForm({ tableId: null, tableNumber: '', tableName: '' });
+      setMessage(tableForm.tableId ? 'Table updated.' : 'Table created.');
+      await loadBillingTables();
+    } catch (err) {
+      console.error('Failed to save table:', err);
+      setError('Could not save table.');
+    } finally {
+      setTableBusy(false);
+    }
+  };
+
+  const deleteTable = async (table) => {
+    const ok = window.confirm(`Delete ${formatTableLabel(table)}?`);
+    if (!ok) return;
+
+    setTableBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const result = await ipcService.invoke('delete-billing-table', { tableId: table.tableId });
+      if (!result?.success) {
+        setError(result?.message || 'Could not delete table.');
+        return;
+      }
+
+      if (Number(selectedTable?.tableId) === Number(table.tableId)) {
+        setSelectedTable(null);
+      }
+
+      setMessage('Table deleted.');
+      await loadBillingTables();
+    } catch (err) {
+      console.error('Failed to delete table:', err);
+      setError('Could not delete table.');
+    } finally {
+      setTableBusy(false);
+    }
+  };
 
   const sendBillPrint = (billData) => {
     if (!billData) return;
@@ -387,6 +629,8 @@ export default function BillingPage({ user }) {
       date: localDateString(),
       orderItems: toOrderItems(),
       totalAmount: finalTotal,
+      tableId: selectedTable?.tableId ?? null,
+      tableLabel: enableTableSelection ? formatTableLabel(selectedTable) : null,
     });
 
     billTimerRef.current = setTimeout(() => {
@@ -414,6 +658,8 @@ export default function BillingPage({ user }) {
       cashier: user.userid,
       date: localDateString(),
       orderItems: toOrderItems(),
+      tableId: selectedTable?.tableId ?? null,
+      tableLabel: enableTableSelection ? formatTableLabel(selectedTable) : null,
     });
 
     billTimerRef.current = setTimeout(() => {
@@ -458,8 +704,16 @@ export default function BillingPage({ user }) {
           <div>
             <h2 className="text-xl font-black text-on-light">Billing</h2>
             <p className="text-sm text-muted">Add items to cart and save/hold bill.</p>
+            {enableTableSelection ? <p className="text-xs text-muted mt-1">{formatTableLabel(selectedTable)}</p> : null}
           </div>
-          <Button variant="secondary" onClick={loadCategories} disabled={loading || saving}>Refresh</Button>
+          <div className="flex items-center gap-2">
+            {enableTableSelection ? (
+              <Button variant="secondary" onClick={openTableModal} disabled={saving || tableBusy}>
+                Select Table
+              </Button>
+            ) : null}
+            <Button variant="secondary" onClick={loadCategories} disabled={loading || saving}>Refresh</Button>
+          </div>
         </div>
 
         <div className="max-w-sm">
@@ -472,18 +726,20 @@ export default function BillingPage({ user }) {
           />
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          {categories.map((category) => (
-            <Button
-              key={category.catid ?? category.catname}
-              size="sm"
-              variant={selectedCategory === category.catname ? 'default' : 'secondary'}
-              onClick={() => setSelectedCategory(category.catname ?? '')}
-              disabled={Boolean(itemSearch.trim())}
-            >
-              {category.catname ?? 'Unknown'}
-            </Button>
-          ))}
+        <div className="overflow-x-auto pb-1">
+          <div className="flex flex-nowrap gap-2 min-w-max">
+            {categories.map((category) => (
+              <Button
+                key={category.catid ?? category.catname}
+                size="sm"
+                variant={selectedCategory === category.catname ? 'default' : 'secondary'}
+                onClick={() => setSelectedCategory(category.catname ?? '')}
+                disabled={Boolean(itemSearch.trim())}
+              >
+                {category.catname ?? 'Unknown'}
+              </Button>
+            ))}
+          </div>
         </div>
 
         <div className="flex-1 min-h-0 overflow-auto pr-1">
@@ -507,6 +763,13 @@ export default function BillingPage({ user }) {
 
       <section className="surface-card rounded-2xl p-4 space-y-4 flex flex-col h-full min-h-0 overflow-hidden">
         <h3 className="text-lg font-black text-on-light">Current Bill</h3>
+
+        {enableTableSelection ? (
+          <div className="rounded-lg border border-on-light bg-input p-2">
+            <p className="text-xs text-muted uppercase">Assigned Table</p>
+            <p className="text-sm font-semibold text-on-light mt-1">{formatTableLabel(selectedTable)}</p>
+          </div>
+        ) : null}
 
         <div className="space-y-2 flex-1 min-h-0 overflow-auto pr-1">
           {cart.length === 0 ? <p className="text-sm text-muted">No items added yet.</p> : null}
@@ -578,6 +841,25 @@ export default function BillingPage({ user }) {
           <Button onClick={saveBill} disabled={saving || cart.length === 0}>{saving ? 'Processing...' : 'Save Bill'}</Button>
         </div>
       </section>
+
+      <TableSelectionModal
+        open={tableModalOpen}
+        tables={tables}
+        selectedTable={selectedTable}
+        loading={tableLoading}
+        busy={tableBusy}
+        form={tableForm}
+        setForm={setTableForm}
+        onClose={() => setTableModalOpen(false)}
+        onSelect={(table) => {
+          setSelectedTable(table);
+          setMessage(`Selected ${formatTableLabel(table)}.`);
+          setTableModalOpen(false);
+        }}
+        onSave={saveTable}
+        onEdit={(table) => setTableForm({ tableId: table.tableId, tableNumber: String(table.tableNumber || ''), tableName: String(table.tableName || '') })}
+        onDelete={deleteTable}
+      />
     </div>
   );
 }

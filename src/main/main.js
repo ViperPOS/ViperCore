@@ -26,6 +26,16 @@ console.log(`Base path: ${basePath}`);
 console.log(`Resources path: ${resourcesPath}`);
 
 const DEFAULT_SUPABASE_PROJECT_URL = 'https://cjkbjnazwewpnzypgber.supabase.co';
+const VALID_THEME_PRESETS = new Set([
+    'classicMono',
+    'navySunburst',
+    'forestCream',
+    'mintRose',
+]);
+
+function normalizeThemePreset(themePreset, fallback = 'creamCharcoal') {
+    return VALID_THEME_PRESETS.has(themePreset) ? themePreset : fallback;
+}
 
 // === React + Vite App Loading ===
 function getMainWindowUrl() {
@@ -123,7 +133,7 @@ async function initializeDatabaseConnection() {
             });
 
             console.log("✅ Connected to the SQLite database.");
-            initializeSchema();
+            await initializeSchema();
             return;
         } catch (err) {
             const isLastAttempt = attempt === maxAttempts;
@@ -154,29 +164,10 @@ async function initStore() {
             printerConfig: {
                 vendorId: '0x0525',
                 productId: '0xA700'
-            },
-            lastOpenedDate: null
+            }
         }
     });
     return store;
-}
-
-async function checkAndResetFoodItems() {
-    await initStore(); // Ensure store is initialized
-    const lastOpenedDate = store.get("lastOpenedDate");
-    const currentDate = getLocalDateString();
-
-    if (lastOpenedDate !== currentDate) {
-        console.log("New day detected, resetting is_on column...");
-        db.run("UPDATE FoodItem SET is_on = 1", (err) => {
-            if (err) {
-                console.error("Failed to reset is_on:", err.message);
-            } else {
-                console.log("Successfully reset is_on for new day.");
-                store.set("lastOpenedDate", currentDate);
-            }
-        });
-    }
 }
 
 function dbGetAsync(query, params = []) {
@@ -199,6 +190,18 @@ function dbRunAsync(query, params = []) {
                 return;
             }
             resolve(this);
+        });
+    });
+}
+
+function dbExecAsync(query) {
+    return new Promise((resolve, reject) => {
+        db.exec(query, (err) => {
+            if (err) {
+                reject(err);
+                return;
+            }
+            resolve();
         });
     });
 }
@@ -363,6 +366,80 @@ async function ensureAppSetupSchema() {
 
     if (!hasRemoteAnonKey) {
         await dbRunAsync('ALTER TABLE AppSetup ADD COLUMN remote_anon_key TEXT');
+    }
+}
+
+async function ensureCategorySchema() {
+    const cols = await dbAllAsync('PRAGMA table_info(Category)');
+    const hasActive = cols.some((col) => col.name === 'active');
+
+    if (!hasActive) {
+        await dbRunAsync('ALTER TABLE Category ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
+    }
+
+    await dbRunAsync('UPDATE Category SET active = 1 WHERE active IS NULL');
+}
+
+async function ensureBillingTableSchema() {
+    await dbRunAsync(`CREATE TABLE IF NOT EXISTS DiningTable (
+        table_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        table_name TEXT NOT NULL,
+        table_number TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+
+    const orderCols = await dbAllAsync('PRAGMA table_info(Orders)');
+    const hasOrderTableId = orderCols.some((col) => col.name === 'table_id');
+    const hasOrderTableLabel = orderCols.some((col) => col.name === 'table_label');
+
+    if (!hasOrderTableId) {
+        await dbRunAsync('ALTER TABLE Orders ADD COLUMN table_id INTEGER');
+    }
+    if (!hasOrderTableLabel) {
+        await dbRunAsync('ALTER TABLE Orders ADD COLUMN table_label TEXT');
+    }
+
+    const heldCols = await dbAllAsync('PRAGMA table_info(HeldOrders)');
+    const hasHeldTableId = heldCols.some((col) => col.name === 'table_id');
+    const hasHeldTableLabel = heldCols.some((col) => col.name === 'table_label');
+
+    if (!hasHeldTableId) {
+        await dbRunAsync('ALTER TABLE HeldOrders ADD COLUMN table_id INTEGER');
+    }
+    if (!hasHeldTableLabel) {
+        await dbRunAsync('ALTER TABLE HeldOrders ADD COLUMN table_label TEXT');
+    }
+
+    const deletedCols = await dbAllAsync('PRAGMA table_info(DeletedOrders)');
+    const hasDeletedTableId = deletedCols.some((col) => col.name === 'table_id');
+    const hasDeletedTableLabel = deletedCols.some((col) => col.name === 'table_label');
+
+    if (!hasDeletedTableId) {
+        await dbRunAsync('ALTER TABLE DeletedOrders ADD COLUMN table_id INTEGER');
+    }
+    if (!hasDeletedTableLabel) {
+        await dbRunAsync('ALTER TABLE DeletedOrders ADD COLUMN table_label TEXT');
+    }
+
+    const totalTablesRow = await dbGetAsync('SELECT COUNT(*) AS count FROM DiningTable');
+    if (Number(totalTablesRow?.count || 0) === 0) {
+        for (let index = 1; index <= 10; index += 1) {
+            await dbRunAsync(
+                `INSERT INTO DiningTable (table_name, table_number, updated_at)
+                 VALUES (?, ?, datetime('now'))`,
+                [`Table ${index}`, String(index)]
+            );
+        }
+    }
+}
+
+async function assertTableHasColumns(tableName, requiredColumns) {
+    const columns = await dbAllAsync(`PRAGMA table_info(${tableName})`);
+    const missingColumns = requiredColumns.filter((columnName) => !columns.some((column) => column.name === columnName));
+
+    if (missingColumns.length > 0) {
+        throw new Error(`Missing required columns on ${tableName}: ${missingColumns.join(', ')}`);
     }
 }
 
@@ -724,7 +801,6 @@ function setupIPC() {
             }
 
             console.log("Login successful:", user.username);
-            await checkAndResetFoodItems();
             store.set("sessionUser", user);
             return user;
     } catch (err) {
@@ -2413,7 +2489,7 @@ ipcMain.on('delete-held-order', (event, heldId) => {
 
 // save bill
 ipcMain.on("save-bill", async (event, orderData) => {
-    const { cashier, date, orderItems, totalAmount } = orderData;
+    const { cashier, date, orderItems, totalAmount, tableId, tableLabel } = orderData;
 
     try {
         let totalSGST = 0, totalCGST = 0, totalTax = 0, calculatedTotalAmount = 0;
@@ -2445,6 +2521,8 @@ ipcMain.on("save-bill", async (event, orderData) => {
 
         // If totalAmount is 0, use calculatedTotalAmount instead
         const finalTotalAmount = totalAmount > 0 ? totalAmount : calculatedTotalAmount;
+        const normalizedTableId = Number.isInteger(Number(tableId)) ? Number(tableId) : null;
+        const normalizedTableLabel = String(tableLabel || '').trim() || null;
 
         // Get the latest KOT number for the current date
         const kotRow = await new Promise((resolve, reject) => {
@@ -2463,8 +2541,18 @@ ipcMain.on("save-bill", async (event, orderData) => {
         // Insert the new order with correct total
         const orderId = await new Promise((resolve, reject) => {
             db.run(
-                `INSERT INTO Orders (kot, price, sgst, cgst, tax, cashier, date) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                [kot, finalTotalAmount.toFixed(2), totalSGST.toFixed(2), totalCGST.toFixed(2), totalTax.toFixed(2), cashier, date],
+                `INSERT INTO Orders (kot, price, sgst, cgst, tax, cashier, date, table_id, table_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    kot,
+                    finalTotalAmount.toFixed(2),
+                    totalSGST.toFixed(2),
+                    totalCGST.toFixed(2),
+                    totalTax.toFixed(2),
+                    cashier,
+                    date,
+                    normalizedTableId,
+                    normalizedTableLabel,
+                ],
                 function (err) {
                     if (err) reject(err);
                     else resolve(this.lastID);
@@ -2509,10 +2597,12 @@ ipcMain.on("save-bill", async (event, orderData) => {
 
 
 ipcMain.on("hold-bill", async (event, orderData) => {
-    const { cashier, date, orderItems } = orderData;
+    const { cashier, date, orderItems, tableId, tableLabel } = orderData;
 
     try {
         let totalPrice = 0, totalSGST = 0, totalCGST = 0, totalTax = 0;
+        const normalizedTableId = Number.isInteger(Number(tableId)) ? Number(tableId) : null;
+        const normalizedTableLabel = String(tableLabel || '').trim() || null;
 
         // Fetch food item data and calculate totals
         for (const { foodId, quantity } of orderItems) {
@@ -2537,8 +2627,16 @@ ipcMain.on("hold-bill", async (event, orderData) => {
         // Insert the new order
         const orderId = await new Promise((resolve, reject) => {
             db.run(
-                `INSERT INTO HeldOrders (price, sgst, cgst, tax, cashier) VALUES (?, ?, ?, ?, ?)`,
-                [totalPrice.toFixed(2), totalSGST.toFixed(2), totalCGST.toFixed(2), totalTax.toFixed(2), cashier], // Keeping .toFixed(2)
+                `INSERT INTO HeldOrders (price, sgst, cgst, tax, cashier, table_id, table_label) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    totalPrice.toFixed(2),
+                    totalSGST.toFixed(2),
+                    totalCGST.toFixed(2),
+                    totalTax.toFixed(2),
+                    cashier,
+                    normalizedTableId,
+                    normalizedTableLabel,
+                ],
                 function (err) {
                     if (err) reject(err);
                     else resolve(this.lastID);
@@ -2622,10 +2720,12 @@ ipcMain.on("get-todays-orders", (event) => {
     const query = `
         SELECT 
             Orders.*, 
+            COALESCE(Orders.table_label, DiningTable.table_number || ' - ' || DiningTable.table_name) AS table_label,
             User.uname AS cashier_name, 
             GROUP_CONCAT(FoodItem.fname || ' (x' || OrderDetails.quantity || ')', ', ') AS food_items
         FROM Orders
         LEFT JOIN User ON Orders.cashier = User.userid
+        LEFT JOIN DiningTable ON Orders.table_id = DiningTable.table_id
         LEFT JOIN OrderDetails ON Orders.billno = OrderDetails.orderid
         LEFT JOIN FoodItem ON OrderDetails.foodid = FoodItem.fid
         WHERE date(Orders.date) = date('now', 'localtime')
@@ -2653,7 +2753,7 @@ ipcMain.on("get-order-history", (event, data) => {
         return;
     }
 
-    const { startDate, endDate } = data;
+    const { startDate, endDate, tableId } = data;
 
     if (!startDate || !endDate) {
         console.error("Missing startDate or endDate for get-order-history");
@@ -2661,21 +2761,33 @@ ipcMain.on("get-order-history", (event, data) => {
         return;
     }
 
-    const query = `
+    let query = `
         SELECT 
             Orders.*, 
+            COALESCE(Orders.table_label, DiningTable.table_number || ' - ' || DiningTable.table_name) AS table_label,
             User.uname AS cashier_name, 
             GROUP_CONCAT(FoodItem.fname || ' (x' || OrderDetails.quantity || ')', ', ') AS food_items
         FROM Orders
         LEFT JOIN User ON Orders.cashier = User.userid
+        LEFT JOIN DiningTable ON Orders.table_id = DiningTable.table_id
         LEFT JOIN OrderDetails ON Orders.billno = OrderDetails.orderid
         LEFT JOIN FoodItem ON OrderDetails.foodid = FoodItem.fid
         WHERE date(Orders.date) BETWEEN date(?) AND date(?)
+    `;
+
+    const params = [startDate, endDate];
+    const normalizedTableId = Number(tableId);
+    if (Number.isInteger(normalizedTableId) && normalizedTableId > 0) {
+        query += ' AND Orders.table_id = ?';
+        params.push(normalizedTableId);
+    }
+
+    query += `
         GROUP BY Orders.billno
         ORDER BY Orders.date DESC;
     `;
 
-    db.all(query, [startDate, endDate], (err, rows) => {
+    db.all(query, params, (err, rows) => {
         if (err) {
             console.error("Error fetching order history:", err);
             event.reply("fetchOrderHistoryResponse", { success: false, orders: [] });
@@ -2718,8 +2830,20 @@ ipcMain.on("confirm-delete-order", async (event, { billNo, reason, source }) => 
 
         // Insert into DeletedOrders
         await db.run(
-            "INSERT INTO DeletedOrders (billno, date, cashier, kot, price, sgst, cgst, tax, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [order.billno, order.date, order.cashier, order.kot, order.price, order.sgst, order.cgst, order.tax, reason]
+            "INSERT INTO DeletedOrders (billno, date, cashier, kot, price, sgst, cgst, tax, reason, table_id, table_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                order.billno,
+                order.date,
+                order.cashier,
+                order.kot,
+                order.price,
+                order.sgst,
+                order.cgst,
+                order.tax,
+                reason,
+                order.table_id ?? null,
+                order.table_label ?? null,
+            ]
         );
 
         // Insert into DeletedOrderDetails
@@ -2766,10 +2890,12 @@ ipcMain.on("get-deleted-orders", (event, { startDate, endDate }) => {
     const query = `
         SELECT 
             DeletedOrders.*, 
+            COALESCE(DeletedOrders.table_label, DiningTable.table_number || ' - ' || DiningTable.table_name) AS table_label,
             User.uname AS cashier_name, 
             GROUP_CONCAT(FoodItem.fname || ' (x' || DeletedOrderDetails.quantity || ')', ', ') AS food_items
         FROM DeletedOrders
         JOIN User ON DeletedOrders.cashier = User.userid
+        LEFT JOIN DiningTable ON DeletedOrders.table_id = DiningTable.table_id
         JOIN DeletedOrderDetails ON DeletedOrders.billno = DeletedOrderDetails.orderid
         JOIN FoodItem ON DeletedOrderDetails.foodid = FoodItem.fid
         WHERE date(DeletedOrders.date) BETWEEN date(?) AND date(?)
@@ -2847,6 +2973,7 @@ ipcMain.on("get-discounted-orders", (event, { startDate, endDate }) => {
             d.billno, 
             o.kot, 
             o.date,
+            COALESCE(o.table_label, DiningTable.table_number || ' - ' || DiningTable.table_name) AS table_label,
             d.Initial_price, 
             d.discount_percentage, 
             d.discount_amount, 
@@ -2854,6 +2981,7 @@ ipcMain.on("get-discounted-orders", (event, { startDate, endDate }) => {
             GROUP_CONCAT(f.fname, ', ') AS food_items
         FROM DiscountedOrders d
         JOIN Orders o ON d.billno = o.billno
+        LEFT JOIN DiningTable ON o.table_id = DiningTable.table_id
         LEFT JOIN OrderDetails od ON d.billno = od.orderid
         LEFT JOIN FoodItem f ON od.foodid = f.fid
         WHERE date(o.date) BETWEEN date(?) AND date(?)
@@ -3263,6 +3391,108 @@ ipcMain.handle("get-categories-for-additem", async () => {
         throw err;
     }
 });
+
+ipcMain.handle('create-category', async (event, payload = {}) => {
+    try {
+        const catname = String(payload?.catname || '').trim();
+        if (!catname) {
+            return { success: false, message: 'Category name is required.' };
+        }
+
+        const existing = await dbGetAsync(
+            `SELECT catid FROM Category WHERE LOWER(catname) = LOWER(?) LIMIT 1`,
+            [catname]
+        );
+        if (existing) {
+            return { success: false, message: 'A category with that name already exists.' };
+        }
+
+        await dbRunAsync(
+            `INSERT INTO Category (catname, active) VALUES (?, 1)`,
+            [catname]
+        );
+
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('categories-updated');
+        }
+
+        return { success: true };
+    } catch (error) {
+        console.error('Failed to create category:', error);
+        return { success: false, message: error.message || 'Failed to create category.' };
+    }
+});
+
+ipcMain.handle('update-category', async (event, payload = {}) => {
+    try {
+        const catid = Number(payload?.catid);
+        const catname = String(payload?.catname || '').trim();
+        const active = payload?.active === false ? 0 : 1;
+
+        if (!catid) {
+            return { success: false, message: 'Valid category id is required.' };
+        }
+
+        if (!catname) {
+            return { success: false, message: 'Category name is required.' };
+        }
+
+        const duplicate = await dbGetAsync(
+            `SELECT catid FROM Category WHERE LOWER(catname) = LOWER(?) AND catid != ? LIMIT 1`,
+            [catname, catid]
+        );
+        if (duplicate) {
+            return { success: false, message: 'Another category already uses that name.' };
+        }
+
+        const result = await dbRunAsync(
+            `UPDATE Category SET catname = ?, active = ? WHERE catid = ?`,
+            [catname, active, catid]
+        );
+
+        if (!result.changes) {
+            return { success: false, message: 'Category not found.' };
+        }
+
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('categories-updated');
+        }
+
+        return { success: true };
+    } catch (error) {
+        console.error('Failed to update category:', error);
+        return { success: false, message: error.message || 'Failed to update category.' };
+    }
+});
+
+ipcMain.handle('toggle-category-active', async (event, payload = {}) => {
+    try {
+        const catid = Number(payload?.catid);
+        const active = payload?.active ? 1 : 0;
+
+        if (!catid) {
+            return { success: false, message: 'Valid category id is required.' };
+        }
+
+        const result = await dbRunAsync(
+            `UPDATE Category SET active = ? WHERE catid = ?`,
+            [active, catid]
+        );
+
+        if (!result.changes) {
+            return { success: false, message: 'Category not found.' };
+        }
+
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('categories-updated');
+        }
+
+        return { success: true };
+    } catch (error) {
+        console.error('Failed to toggle category active state:', error);
+        return { success: false, message: error.message || 'Failed to update category.' };
+    }
+});
 // Add new food item
 ipcMain.handle("add-food-item", async (event, item) => {
     return new Promise((resolve, reject) => {
@@ -3528,15 +3758,13 @@ ipcMain.handle('load-ui-settings', async () => {
         const dataPath = getFilePath('uiSettings.json');
         const fileData = await fs.promises.readFile(dataPath, 'utf-8');
         const parsed = JSON.parse(fileData);
+        const resolvedTheme = normalizeThemePreset(parsed?.themePreset, 'creamCharcoal');
         return {
             showHoldBill: parsed?.showHoldBill !== false,
-            themePreset: parsed?.themePreset === 'classicMono'
-                ? 'classicMono'
-                : parsed?.themePreset === 'navySunburst'
-                    ? 'navySunburst'
-                    : 'creamCharcoal',
+            themePreset: resolvedTheme,
             autoPrintBillOnSave: parsed?.autoPrintBillOnSave === true,
             autoPrintKotOnSave: parsed?.autoPrintKotOnSave === true,
+            enableTableSelection: parsed?.enableTableSelection === true,
         };
     } catch (err) {
         return {
@@ -3544,6 +3772,7 @@ ipcMain.handle('load-ui-settings', async () => {
             themePreset: 'creamCharcoal',
             autoPrintBillOnSave: false,
             autoPrintKotOnSave: false,
+            enableTableSelection: false,
         };
     }
 });
@@ -3564,29 +3793,131 @@ ipcMain.handle('save-ui-settings', async (event, settings) => {
             showHoldBill: settings?.showHoldBill !== undefined
                 ? settings.showHoldBill !== false
                 : existingSettings?.showHoldBill !== false,
-            themePreset: settings?.themePreset === 'classicMono'
-                ? 'classicMono'
-                : settings?.themePreset === 'navySunburst'
-                    ? 'navySunburst'
-                    : settings?.themePreset === 'creamCharcoal'
-                        ? 'creamCharcoal'
-                        : (existingSettings?.themePreset === 'classicMono'
-                            ? 'classicMono'
-                            : existingSettings?.themePreset === 'navySunburst'
-                                ? 'navySunburst'
-                                : 'creamCharcoal'),
+            themePreset: normalizeThemePreset(
+                settings?.themePreset,
+                normalizeThemePreset(existingSettings?.themePreset, 'creamCharcoal')
+            ),
             autoPrintBillOnSave: settings?.autoPrintBillOnSave !== undefined
                 ? settings.autoPrintBillOnSave === true
                 : existingSettings?.autoPrintBillOnSave === true,
             autoPrintKotOnSave: settings?.autoPrintKotOnSave !== undefined
                 ? settings.autoPrintKotOnSave === true
                 : existingSettings?.autoPrintKotOnSave === true,
+            enableTableSelection: settings?.enableTableSelection !== undefined
+                ? settings.enableTableSelection === true
+                : existingSettings?.enableTableSelection === true,
         };
         await fs.promises.writeFile(dataPath, JSON.stringify(nextSettings, null, 2), 'utf-8');
         return { success: true };
     } catch (err) {
         console.error('Failed to save UI settings:', err);
         return { success: false, message: err.message };
+    }
+});
+
+ipcMain.handle('get-billing-tables', async () => {
+    try {
+        const rows = await dbAllAsync(
+            `SELECT table_id AS tableId, table_name AS tableName, table_number AS tableNumber
+             FROM DiningTable
+             ORDER BY CAST(table_number AS INTEGER), table_number, table_name`
+        );
+        return { success: true, tables: rows };
+    } catch (error) {
+        console.error('Failed to fetch billing tables:', error);
+        return { success: false, message: error.message || 'Failed to fetch tables.', tables: [] };
+    }
+});
+
+ipcMain.handle('create-billing-table', async (event, payload) => {
+    try {
+        const tableName = String(payload?.tableName || '').trim();
+        const tableNumber = String(payload?.tableNumber || '').trim();
+
+        if (!tableName || !tableNumber) {
+            return { success: false, message: 'Table name and number are required.' };
+        }
+
+        const duplicate = await dbGetAsync(
+            `SELECT table_id FROM DiningTable WHERE LOWER(table_number) = LOWER(?) LIMIT 1`,
+            [tableNumber]
+        );
+        if (duplicate) {
+            return { success: false, message: 'Table number already exists.' };
+        }
+
+        await dbRunAsync(
+            `INSERT INTO DiningTable (table_name, table_number, updated_at)
+             VALUES (?, ?, datetime('now'))`,
+            [tableName, tableNumber]
+        );
+
+        return { success: true };
+    } catch (error) {
+        console.error('Failed to create billing table:', error);
+        return { success: false, message: error.message || 'Failed to create table.' };
+    }
+});
+
+ipcMain.handle('update-billing-table', async (event, payload) => {
+    try {
+        const tableId = Number(payload?.tableId);
+        const tableName = String(payload?.tableName || '').trim();
+        const tableNumber = String(payload?.tableNumber || '').trim();
+
+        if (!tableId || !tableName || !tableNumber) {
+            return { success: false, message: 'Valid table id, name, and number are required.' };
+        }
+
+        const duplicate = await dbGetAsync(
+            `SELECT table_id FROM DiningTable
+             WHERE LOWER(table_number) = LOWER(?) AND table_id != ?
+             LIMIT 1`,
+            [tableNumber, tableId]
+        );
+        if (duplicate) {
+            return { success: false, message: 'Table number already exists.' };
+        }
+
+        await dbRunAsync(
+            `UPDATE DiningTable
+             SET table_name = ?, table_number = ?, updated_at = datetime('now')
+             WHERE table_id = ?`,
+            [tableName, tableNumber, tableId]
+        );
+
+        return { success: true };
+    } catch (error) {
+        console.error('Failed to update billing table:', error);
+        return { success: false, message: error.message || 'Failed to update table.' };
+    }
+});
+
+ipcMain.handle('delete-billing-table', async (event, payload) => {
+    try {
+        const tableId = Number(payload?.tableId);
+        if (!tableId) {
+            return { success: false, message: 'Valid table id is required.' };
+        }
+
+        const inOrders = await dbGetAsync(
+            `SELECT billno FROM Orders WHERE table_id = ? LIMIT 1`,
+            [tableId]
+        );
+        const inHeldOrders = await dbGetAsync(
+            `SELECT heldid FROM HeldOrders WHERE table_id = ? LIMIT 1`,
+            [tableId]
+        );
+
+        if (inOrders || inHeldOrders) {
+            return { success: false, message: 'Table is already used in orders and cannot be deleted.' };
+        }
+
+        await dbRunAsync('DELETE FROM DiningTable WHERE table_id = ?', [tableId]);
+        return { success: true };
+    } catch (error) {
+        console.error('Failed to delete billing table:', error);
+        return { success: false, message: error.message || 'Failed to delete table.' };
     }
 });
 // ------------------------------- UI SETTINGS SECTION ENDS HERE ------------------------
@@ -3655,7 +3986,8 @@ ipcMain.on('restore-database-local', async (event) => {
 // ---------------------------------- BACKUP AND RESTORE SECTION ENDS HERE -------------------
 //----------------------------------- Packaging Code --------------------------------------
 function initializeSchema() {
-    db.serialize(() => {
+    return new Promise((resolve, reject) => {
+        db.serialize(() => {
       db.run(`CREATE TABLE IF NOT EXISTS Category (
         catid INTEGER PRIMARY KEY AUTOINCREMENT,
         catname TEXT NOT NULL,
@@ -3788,6 +4120,8 @@ function initializeSchema() {
         cashier INTEGER NOT NULL,
         date TEXT NOT NULL,
         reason TEXT NOT NULL,
+        table_id INTEGER,
+        table_label TEXT,
         is_offline INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (cashier) REFERENCES User(userid)
       )`);
@@ -3807,54 +4141,77 @@ function initializeSchema() {
 
                         db.run(`DROP TABLE IF EXISTS Miscellaneous`);
 
-                        (async () => {
-                            try {
-                                await ensureUserTableSchema();
-                                await ensureAppSetupSchema();
-                                await runDatabaseSanityChecks();
-                                console.log('✅ Database sanity check passed.');
-                            } catch (schemaErr) {
-                                console.error('Error preparing local database schema:', schemaErr);
-                            }
+                        const schemaChecksPromise = (async () => {
+                            await ensureUserTableSchema();
+                            await ensureAppSetupSchema();
+                            await ensureCategorySchema();
+                            await ensureBillingTableSchema();
+                            await assertTableHasColumns('Category', ['catid', 'catname', 'active']);
+                            await assertTableHasColumns('Orders', ['table_id', 'table_label']);
+                            await assertTableHasColumns('HeldOrders', ['table_id', 'table_label']);
+                            await assertTableHasColumns('DeletedOrders', ['table_id', 'table_label']);
+                            await runDatabaseSanityChecks();
                         })();
 
-                db.all(`PRAGMA table_info(FoodItem)`, [], (err, columns) => {
-                    if (err) {
-                        console.error('Error inspecting FoodItem schema:', err);
-                        return;
-                    }
+                const foodItemMigrationPromise = new Promise((resolveMigration, rejectMigration) => {
+                    db.all(`PRAGMA table_info(FoodItem)`, [], async (err, columns) => {
+                        if (err) {
+                            rejectMigration(err);
+                            return;
+                        }
 
-                    const hasLegacyDependInv = Array.isArray(columns) && columns.some((column) => column.name === 'depend_inv');
-                    if (!hasLegacyDependInv) {
-                        return;
-                    }
+                        const hasLegacyDependInv = Array.isArray(columns) && columns.some((column) => column.name === 'depend_inv');
+                        if (!hasLegacyDependInv) {
+                            resolveMigration();
+                            return;
+                        }
 
-                    db.serialize(() => {
-                        db.run('PRAGMA foreign_keys = OFF');
-                        db.run(`CREATE TABLE IF NOT EXISTS FoodItem_new (
-                            fid INTEGER PRIMARY KEY AUTOINCREMENT,
-                            fname TEXT NOT NULL,
-                            category INTEGER NOT NULL,
-                            cost NUMERIC NOT NULL,
-                            sgst NUMERIC NOT NULL DEFAULT 0,
-                            cgst NUMERIC NOT NULL DEFAULT 0,
-                            tax NUMERIC NOT NULL DEFAULT 0,
-                            active INTEGER NOT NULL DEFAULT 1,
-                            is_on INTEGER NOT NULL DEFAULT 1,
-                            veg INTEGER NOT NULL DEFAULT 0,
-                            FOREIGN KEY (category) REFERENCES Category(catid)
-                        )`);
-                        db.run(`INSERT INTO FoodItem_new (fid, fname, category, cost, sgst, cgst, tax, active, is_on, veg)
-                                        SELECT fid, fname, category, cost, sgst, cgst, tax, active, is_on, veg
-                                        FROM FoodItem`);
-                        db.run(`DROP TABLE FoodItem`);
-                        db.run(`ALTER TABLE FoodItem_new RENAME TO FoodItem`);
-                        db.run('PRAGMA foreign_keys = ON');
+                        try {
+                            await dbExecAsync(`
+                                PRAGMA foreign_keys = OFF;
+
+                                CREATE TABLE IF NOT EXISTS FoodItem_new (
+                                    fid INTEGER PRIMARY KEY AUTOINCREMENT,
+                                    fname TEXT NOT NULL,
+                                    category INTEGER NOT NULL,
+                                    cost NUMERIC NOT NULL,
+                                    sgst NUMERIC NOT NULL DEFAULT 0,
+                                    cgst NUMERIC NOT NULL DEFAULT 0,
+                                    tax NUMERIC NOT NULL DEFAULT 0,
+                                    active INTEGER NOT NULL DEFAULT 1,
+                                    is_on INTEGER NOT NULL DEFAULT 1,
+                                    veg INTEGER NOT NULL DEFAULT 0,
+                                    FOREIGN KEY (category) REFERENCES Category(catid)
+                                );
+
+                                INSERT INTO FoodItem_new (fid, fname, category, cost, sgst, cgst, tax, active, is_on, veg)
+                                SELECT fid, fname, category, cost, sgst, cgst, tax, active, is_on, veg
+                                FROM FoodItem;
+
+                                DROP TABLE FoodItem;
+                                ALTER TABLE FoodItem_new RENAME TO FoodItem;
+
+                                PRAGMA foreign_keys = ON;
+                            `);
+                            resolveMigration();
+                        } catch (migrationErr) {
+                            rejectMigration(migrationErr);
+                        }
                     });
                 });
 
-      console.log("📦 Database schema ensured (tables created if missing).");
-    });
+                Promise.all([schemaChecksPromise, foodItemMigrationPromise])
+                    .then(() => {
+                        console.log('✅ Database sanity check passed.');
+                        console.log("📦 Database schema ensured (tables created if missing).");
+                        resolve();
+                    })
+                    .catch((schemaErr) => {
+                        console.error('Error preparing local database schema:', schemaErr);
+                        reject(schemaErr);
+                    });
+            });
+        });
   }
 
 
@@ -3870,10 +4227,12 @@ ipcMain.on("search-orders", (event, filters) => {
             o.cgst,
             o.tax,
             o.date,
+            COALESCE(o.table_label, DiningTable.table_number || ' - ' || DiningTable.table_name) AS table_label,
             u.uname AS cashier_name,
             GROUP_CONCAT(fi.fname || ' (x' || od.quantity || ')', ', ') AS food_items
         FROM Orders o
         JOIN User u ON o.cashier = u.userid
+        LEFT JOIN DiningTable ON o.table_id = DiningTable.table_id
         JOIN OrderDetails od ON o.billno = od.orderid
         JOIN FoodItem fi ON od.foodid = fi.fid
     `;
@@ -3911,6 +4270,12 @@ ipcMain.on("search-orders", (event, filters) => {
     if (filters.cashier) {
         conditions.push("o.cashier = ?");
         params.push(parseInt(filters.cashier));
+    }
+
+    // Table
+    if (filters.tableId) {
+        conditions.push("o.table_id = ?");
+        params.push(parseInt(filters.tableId));
     }
 
     // Price range

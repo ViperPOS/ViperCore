@@ -6,6 +6,7 @@ import {
 import BillingPage from '@/pages/BillingPage';
 import HistoryPage from '@/pages/HistoryPage';
 import MenuPage from '@/pages/MenuPage';
+import CategoriesPage from '@/pages/CategoriesPage';
 import OperationsPage from '@/pages/OperationsPage';
 import ReportsPage from '@/pages/ReportsPage';
 import SettingsPage from '@/pages/SettingsPage';
@@ -14,6 +15,7 @@ import SearchOrderPage from '@/pages/SearchOrderPage';
 const navSections = [
   { key: 'billing',   label: 'Billing',   Icon: Receipt },
   { key: 'menu',      label: 'Menu',      Icon: MenuSquare },
+  { key: 'categories', label: 'Categories', Icon: MenuSquare },
   { key: 'history',   label: 'History',   Icon: BookOpen, subViews: [
     { key: 'todaysOrders',    label: "Today's Orders" },
     { key: 'orderHistory',    label: 'Order History' },
@@ -36,6 +38,7 @@ const navSections = [
   { key: 'settings', label: 'Settings', Icon: Settings, subViews: [
     { key: 'profile',       label: 'Profile & Password' },
     { key: 'featureToggles', label: 'Feature Toggles' },
+    { key: 'categoryManagement', label: 'Category Management' },
     { key: 'theme',         label: 'Theme' },
     { key: 'printerConfig', label: 'Printer Config' },
     { key: 'businessInfo',  label: 'Business Info' },
@@ -139,6 +142,7 @@ export default function DashboardPage({ user, onLogout }) {
   const renderContent = () => {
     if (activeView === 'billing') return <BillingPage user={user} />;
     if (activeView === 'menu') return <MenuPage />;
+    if (activeView === 'categories') return <CategoriesPage user={user} />;
 
     if (activeView === 'history') {
       if (['todaysOrders', 'discountedOrders', 'deletedOrders'].includes(activeSubView)) {

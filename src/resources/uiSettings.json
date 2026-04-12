@@ -2,5 +2,6 @@
   "showHoldBill": false,
   "themePreset": "navySunburst",
   "autoPrintBillOnSave": false,
-  "autoPrintKotOnSave": false
+  "autoPrintKotOnSave": false,
+  "enableTableSelection": true
 }

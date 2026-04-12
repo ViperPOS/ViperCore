@@ -282,6 +282,20 @@ export default function MenuPage() {
     return () => { mountedRef.current = false; };
   }, [loadMenuItems, loadCategories]);
 
+  useEffect(() => {
+    const handleCategoriesUpdated = () => {
+      loadCategories();
+      loadMenuItems();
+    };
+
+    const wrapped = ipcService.on('categories-updated', handleCategoriesUpdated);
+    return () => {
+      if (wrapped) {
+        ipcService.removeListener('categories-updated', handleCategoriesUpdated);
+      }
+    };
+  }, [loadCategories, loadMenuItems]);
+
   const filteredItems = useMemo(() => {
     const text = query.trim().toLowerCase();
     if (!text) return items;
