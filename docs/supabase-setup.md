@@ -39,6 +39,25 @@ Only store hashes from the application or backend.
 3. Run the script.
 4. Confirm activation keys and required tables were created.
 
+## How to add a new activation key
+
+When you need a new onboarding key, add it in `public.activation_keys` with `status='available'`.
+
+```sql
+insert into public.activation_keys (key_code, status, notes)
+values ('ALSP0-AB12C-34DEF-56GHI', 'available', 'Manual key provisioning');
+```
+
+Then verify:
+
+```sql
+select key_code, status, assigned_at, used_at
+from public.activation_keys
+order by created_at desc;
+```
+
+After that, setup handles the rest automatically through `initialize-tenant` (reserve key, create tenant/admin/device/subscription, mark key used).
+
 ## Recommended onboarding flow
 
 1. Customer enters an activation key.

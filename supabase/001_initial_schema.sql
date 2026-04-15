@@ -222,3 +222,8 @@ select
   ak.updated_at
 from public.activation_keys ak
 left join public.tenants t on t.id = ak.used_tenant_id;
+
+-- Restrict helper view access to trusted backend role only.
+revoke all on table public.activation_key_overview from anon, authenticated;
+revoke all on table public.activation_key_overview from service_role;
+grant select on table public.activation_key_overview to service_role;

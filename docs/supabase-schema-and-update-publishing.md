@@ -252,14 +252,79 @@ Contains:
 - Edge Functions use service-role client, so they bypass RLS policies as trusted backend operations.
 - Keep the updates Storage bucket private.
 - Never expose service role key to renderer/client.
+- `activation_key_overview` is explicitly restricted to backend role usage only (`service_role` has `SELECT` only; `anon` and `authenticated` have no grants).
 
 ---
 
-## 6. Update Publishing Steps (Manual Prompt Flow)
+## 6. Activation Key Setup (What To Add Manually)
+
+If you want to provision a new customer/site, you only need to add a new row in `public.activation_keys` with status `available`.
+
+Table used:
+
+- `public.activation_keys`
+
+Required field:
+
+- `key_code` (must be unique)
+
+Recommended format:
+
+- Uppercase alphanumeric blocks, e.g. `ABCDE-ABCDE-ABCDE-ABCDE`
+- The current app validation allows either 4 blocks or 5 blocks of 5 characters each.
+
+### 6.1 Add one new activation key
+
+```sql
+insert into public.activation_keys (key_code, status, notes)
+values ('ALSP0-AB12C-34DEF-56GHI', 'available', 'Manual provisioning key');
+```
+
+### 6.2 Add multiple activation keys in one go
+
+```sql
+insert into public.activation_keys (key_code, status)
+values
+  ('ALSP0-JK78L-90MNO-12PQR', 'available'),
+  ('ALSP0-ST34U-56VWX-78YZA', 'available'),
+  ('ALSP0-BC90D-12EFG-34HIJ', 'available')
+on conflict (key_code) do nothing;
+```
+
+### 6.3 Verify available keys
+
+```sql
+select key_code, status, assigned_at, used_at
+from public.activation_keys
+order by created_at desc;
+```
+
+### 6.4 Revoke a key (if leaked)
+
+```sql
+update public.activation_keys
+set status = 'revoked'
+where key_code = 'ALSP0-AB12C-34DEF-56GHI';
+```
+
+### 6.5 What happens automatically after key creation
+
+Once a key exists in `activation_keys` with status `available`, the rest is handled by the existing setup flow:
+
+1. `initialize-tenant` reserves the key (`available -> reserved`).
+2. Tenant and master admin are created.
+3. Device and subscription rows are seeded.
+4. Key is finalized as `used` and linked to the tenant.
+
+No additional manual row creation is required for activation flow beyond adding the key itself.
+
+---
+
+## 7. Update Publishing Steps (Manual Prompt Flow)
 
 This section is the exact release process for the current app implementation.
 
-## 6.1 Pre-flight
+## 7.1 Pre-flight
 
 1. Bump app version in package.json.
 2. Build/package installer artifact from app repo.
@@ -268,7 +333,7 @@ This section is the exact release process for the current app implementation.
    - check-update
 4. Confirm private Storage bucket exists (recommended name: updates).
 
-## 6.2 Build Installer
+## 7.2 Build Installer
 
 Run from repo root:
 
@@ -277,7 +342,7 @@ Run from repo root:
 
 Output should include your Windows installer executable produced by electron-builder.
 
-## 6.3 Upload Artifact To Private Bucket
+## 7.3 Upload Artifact To Private Bucket
 
 1. Open Supabase Dashboard.
 2. Go to Storage -> updates bucket.
@@ -285,7 +350,7 @@ Output should include your Windows installer executable produced by electron-bui
   - windows/stable/1.0.5/alspos Setup.exe
 4. Keep bucket private.
 
-## 6.4 Create app_releases Row
+## 7.4 Create app_releases Row
 
 Insert one row describing the uploaded artifact.
 
@@ -342,7 +407,7 @@ values (
 );
 ```
 
-## 6.5 Ensure Tenant Is Eligible
+## 7.5 Ensure Tenant Is Eligible
 
 For any tenant expected to receive update:
 
@@ -350,7 +415,7 @@ For any tenant expected to receive update:
 2. tenant_subscriptions must be active/trial (or past_due in grace period).
 3. tenant_devices must contain active app_instance_id row.
 
-## 6.6 In-App Update Test (Settings)
+## 7.6 In-App Update Test (Settings)
 
 1. Open app -> Settings -> Updates.
 2. Click Check for Updates.
@@ -358,7 +423,7 @@ For any tenant expected to receive update:
 4. Click Download Update.
 5. Click Install Update (manual installer launch).
 
-## 6.7 Verify Audit Trail
+## 7.7 Verify Audit Trail
 
 Run:
 
@@ -378,7 +443,7 @@ Expected outcomes:
 
 ---
 
-## 7. Operational Tips
+## 8. Operational Tips
 
 - Use only one active release per channel/platform/arch for predictable behavior.
 - When superseding a release, set previous row active=false.
@@ -388,7 +453,7 @@ Expected outcomes:
 
 ---
 
-## 8. Quick Troubleshooting
+## 9. Quick Troubleshooting
 
 - No update found:
   - Check app_releases active row for channel/platform/arch and version higher than client.
