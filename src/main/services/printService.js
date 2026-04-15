@@ -156,7 +156,7 @@ class PrintService {
     const totalFromItems = items.reduce((sum, item) => sum + (item.qty * item.price), 0);
 
     return {
-      shopName: clampText(order.shopName || 'THE LASSI CORNER', 30),
+      shopName: clampText(order.shopName || 'ALSPOS', 30),
       subtitle: clampText(order.subtitle || 'SJEC, VAMANJOOR', 30),
       footer: clampText(order.footer || 'Thank you for visiting!', 36),
       token: clampText(order.kot || order.token || '-', 12),
@@ -240,7 +240,7 @@ class PrintService {
     }
 
     const template = this.loadTemplate({
-      title: 'THE LASSI CORNER',
+      title: 'ALSPOS',
       subtitle: 'SJEC, VAMANJOOR',
       footer: 'Thank you for visiting!',
       itemHeader: 'ITEM',

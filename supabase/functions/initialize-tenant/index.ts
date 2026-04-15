@@ -25,6 +25,10 @@ Deno.serve(async (req) => {
     const contactPhone = String(body.contactPhone || "").trim();
     const contactEmail = String(body.contactEmail || "").trim();
     const contactAddress = String(body.contactAddress || "").trim();
+    const appInstanceId = String(body.appInstanceId || "").trim();
+    const appVersion = String(body.appVersion || "").trim() || "unknown";
+    const platform = String(body.platform || "").trim() || "unknown";
+    const arch = String(body.arch || "").trim() || "unknown";
     const masterPin = String(body.masterPin || "").trim();
     const adminName = String(body.adminName || "").trim();
     const adminUsername = String(body.adminUsername || "").trim().toLowerCase();
@@ -46,6 +50,13 @@ Deno.serve(async (req) => {
 
     if (!adminName || !adminUsername || adminPassword.length < 6) {
       return new Response(JSON.stringify({ success: false, message: "Admin details are invalid" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (!appInstanceId) {
+      return new Response(JSON.stringify({ success: false, message: "App installation identity is required" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -132,6 +143,63 @@ Deno.serve(async (req) => {
         .eq("id", keyReservation.id);
 
       return new Response(JSON.stringify({ success: false, message: adminErr?.message || "Failed to create admin account" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+
+    const { error: deviceErr } = await supabase
+      .from("tenant_devices")
+      .upsert({
+        tenant_id: tenant.id,
+        app_instance_id: appInstanceId,
+        machine_fingerprint_hash: null,
+        platform,
+        arch,
+        app_version: appVersion,
+        status: "active",
+        first_registered_at: nowIso,
+        last_seen_at: nowIso,
+      }, { onConflict: "tenant_id,app_instance_id" });
+
+    if (deviceErr) {
+      await supabase.from("tenant_users").delete().eq("tenant_id", tenant.id);
+      await supabase.from("tenants").delete().eq("id", tenant.id);
+      await supabase
+        .from("activation_keys")
+        .update({ status: "available", assigned_at: null })
+        .eq("id", keyReservation.id);
+
+      return new Response(JSON.stringify({ success: false, message: deviceErr.message || "Failed to register app installation" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const { error: subscriptionErr } = await supabase
+      .from("tenant_subscriptions")
+      .upsert({
+        tenant_id: tenant.id,
+        plan_name: "starter",
+        status: "active",
+        starts_at: nowIso,
+        expires_at: null,
+        grace_until: null,
+        notes: "Provisioned during initial setup",
+      }, { onConflict: "tenant_id" });
+
+    if (subscriptionErr) {
+      await supabase.from("tenant_devices").delete().eq("tenant_id", tenant.id);
+      await supabase.from("tenant_users").delete().eq("tenant_id", tenant.id);
+      await supabase.from("tenants").delete().eq("id", tenant.id);
+      await supabase
+        .from("activation_keys")
+        .update({ status: "available", assigned_at: null })
+        .eq("id", keyReservation.id);
+
+      return new Response(JSON.stringify({ success: false, message: subscriptionErr.message || "Failed to create subscription record" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });

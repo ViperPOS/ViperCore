@@ -15,6 +15,17 @@ This project now has a Supabase-first bootstrap schema in [supabase/001_initial_
   - Stores the master admin user and employee users.
   - Supports login by password or PIN.
   - Stores only hashed secrets.
+- `tenant_devices`
+  - Stores registered app installations per tenant (`app_instance_id`).
+  - Supports device-aware policy checks.
+- `tenant_subscriptions`
+  - Stores subscription/entitlement status per tenant.
+  - Supports expiry and grace-period checks.
+- `app_releases`
+  - Stores release metadata by channel/platform/arch.
+  - Used to decide which update artifact should be served.
+- `update_audit_log`
+  - Stores update decision logs (allowed, denied, no_update, error).
 
 ## Important security note
 
@@ -26,7 +37,7 @@ Only store hashes from the application or backend.
 1. Open the Supabase SQL Editor.
 2. Paste the contents of [supabase/001_initial_schema.sql](../supabase/001_initial_schema.sql).
 3. Run the script.
-4. Confirm the five activation keys were inserted.
+4. Confirm activation keys and required tables were created.
 
 ## Recommended onboarding flow
 
@@ -40,24 +51,27 @@ Only store hashes from the application or backend.
    - hashed master PIN
 4. Create the first `tenant_users` row for the master admin.
 5. Allow the master admin to create employee accounts and employee PINs.
+6. Register app installation identity for the tenant device record.
 
-## What the current schema does not do yet
+## What the schema does not do by itself
 
 - It does not create app login APIs.
 - It does not define application-side auth routes.
-- It does not add Supabase client integration to the Electron app yet.
+- It does not publish app release rows automatically.
+- It does not upload installer artifacts automatically.
 
-That should be the next step after the database is confirmed.
+These are handled by main-process logic and Supabase Edge Functions.
 
 ## Next implementation step
 
-Add backend or Supabase Edge Functions for:
+Deploy backend or Supabase Edge Functions for:
 
 - activation key validation
 - tenant onboarding
 - master PIN reset/change
 - employee account creation
 - login by username/password or PIN
+- update authorization and signed artifact URL generation
 
 ## Credential reminder
 

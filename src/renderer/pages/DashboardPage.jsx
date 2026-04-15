@@ -38,6 +38,7 @@ const navSections = [
   { key: 'settings', label: 'Settings', Icon: Settings, subViews: [
     { key: 'profile',       label: 'Profile & Password' },
     { key: 'featureToggles', label: 'Feature Toggles' },
+    { key: 'updates',       label: 'Updates' },
     { key: 'categoryManagement', label: 'Category Management' },
     { key: 'theme',         label: 'Theme' },
     { key: 'printerConfig', label: 'Printer Config' },
@@ -180,7 +181,7 @@ export default function DashboardPage({ user, onLogout }) {
         {/* Brand */}
         <div className="px-6 py-6" style={{ borderBottom: '1px solid var(--border-on-dark)' }}>
           <p className="text-sm font-bold tracking-[0.15em]" style={{ color: 'var(--text-on-dark)' }}>
-            Lassi Corner POS
+            alspos
           </p>
           <p className="text-[10px] mt-1" style={{ color: 'var(--text-on-dark)', opacity: 0.4 }}>
             {user?.username ?? 'Staff'}

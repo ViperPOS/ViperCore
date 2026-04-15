@@ -1,14 +1,10 @@
 {
-  "name": "lassi-corner",
-  "version": "1.0.4",
+  "name": "alspos",
+  "version": "0.1.0",
   "main": "main.js",
-  "description": "Lassi Corner POS System",
+  "description": "alspos",
   "author": "Alston Mendonca <alstondmendonca@gmail.com>",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/alstonmendonca/AlsLCP.git"
-  },
+  "license": "UNLICENSED",
   "scripts": {
     "dev": "vite & wait-on http://localhost:5173 && cross-env ELECTRON_RENDERER_URL=http://localhost:5173 electron .",
     "dev:vite": "vite",
@@ -26,9 +22,9 @@
   },
   "build": {
     "icon": "assets/images/favicon.ico",
-    "appId": "com.lassicorner.app",
-    "productName": "Lassi Corner",
-    "artifactName": "Lassi Corner Setup.exe",
+    "appId": "com.alspos.app",
+    "productName": "alspos",
+    "artifactName": "alspos Setup.exe",
     "files": [
       "dist/**/*",
       "src/main/**/*"
@@ -48,11 +44,11 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Lassi Corner POS System",
+      "shortcutName": "alspos",
       "allowElevation": false,
       "runAfterFinish": true,
       "installerIcon": "assets/images/favicon.ico",
-      "uninstallerIcon": "assets/images/uninstall.ico"
+      "uninstallerIcon": "assets/images/favicon.ico"
     }
   },
   "devDependencies": {

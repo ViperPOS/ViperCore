@@ -5,6 +5,7 @@ import PrinterConfig from '@/pages/PrinterConfigPage';
 import BusinessInfoPage from '@/pages/BusinessInfoPage';
 import BackupRestorePage from '@/pages/BackupRestorePage';
 import { applyThemePreset, resolveThemePreset } from '@/lib/themePresets';
+import updateService from '@/services/updateService';
 
 function ThemeTab() {
   const [selectedPreset, setSelectedPreset] = useState('creamCharcoal');
@@ -471,6 +472,161 @@ function AppControlsTab({ onExitApp }) {
   );
 }
 
+function UpdateTab() {
+  const [state, setState] = useState({
+    status: 'idle',
+    updateAvailable: false,
+    checking: false,
+    downloading: false,
+    canInstall: false,
+    currentVersion: '',
+    latestVersion: '',
+    message: '',
+    error: '',
+    updateInfo: null,
+    downloadedPath: null,
+    lastCheckedAt: null,
+    progress: 0,
+  });
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const load = async () => {
+      try {
+        const snapshot = await updateService.getStatus();
+        if (mounted && snapshot) {
+          setState(snapshot);
+        }
+      } catch (error) {
+        if (mounted) {
+          setState((prev) => ({ ...prev, error: 'Could not load update status.' }));
+        }
+      }
+    };
+
+    const unsubscribe = updateService.subscribe((payload) => {
+      if (!mounted || !payload?.payload) return;
+      setState((prev) => ({ ...prev, ...payload.payload }));
+    });
+
+    load();
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, []);
+
+  const checkForUpdates = async () => {
+    setBusy(true);
+    try {
+      const snapshot = await updateService.checkForUpdates();
+      if (snapshot) {
+        setState(snapshot);
+      }
+    } catch (error) {
+      setState((prev) => ({ ...prev, error: error?.message || 'Failed to check for updates.' }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const downloadUpdate = async () => {
+    setBusy(true);
+    try {
+      const snapshot = await updateService.downloadUpdate();
+      if (snapshot) {
+        setState(snapshot);
+      }
+    } catch (error) {
+      setState((prev) => ({ ...prev, error: error?.message || 'Failed to download update.' }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const installUpdate = async () => {
+    setBusy(true);
+    try {
+      await updateService.installUpdate();
+    } catch (error) {
+      setState((prev) => ({ ...prev, error: error?.message || 'Failed to launch installer.' }));
+      setBusy(false);
+    }
+  };
+
+  const releaseNotes = state.updateInfo?.releaseNotes || '';
+
+  return (
+    <section className="surface-card rounded-2xl p-5 space-y-4 max-w-2xl">
+      <div>
+        <h2 className="text-xl font-black text-on-light">Updates</h2>
+        <p className="text-sm text-muted mt-1">Check for signed Supabase-hosted releases and install them manually.</p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+        <div className="rounded-xl border border-on-light p-3">
+          <p className="text-xs uppercase text-muted">Current Version</p>
+          <p className="mt-1 font-semibold text-on-light">{state.currentVersion || 'Unknown'}</p>
+        </div>
+        <div className="rounded-xl border border-on-light p-3">
+          <p className="text-xs uppercase text-muted">Latest Version</p>
+          <p className="mt-1 font-semibold text-on-light">{state.latestVersion || 'Not checked yet'}</p>
+        </div>
+        <div className="rounded-xl border border-on-light p-3">
+          <p className="text-xs uppercase text-muted">Status</p>
+          <p className="mt-1 font-semibold text-on-light">{state.status || 'idle'}</p>
+        </div>
+        <div className="rounded-xl border border-on-light p-3">
+          <p className="text-xs uppercase text-muted">Last Checked</p>
+          <p className="mt-1 font-semibold text-on-light">
+            {state.lastCheckedAt ? new Date(state.lastCheckedAt).toLocaleString() : 'Never'}
+          </p>
+        </div>
+      </div>
+
+      {state.updateAvailable ? (
+        <div className="rounded-xl border border-success/30 bg-success/5 p-4 space-y-2">
+          <p className="font-semibold text-success">Update available: {state.latestVersion}</p>
+          {releaseNotes ? <p className="text-sm text-on-light whitespace-pre-wrap">{releaseNotes}</p> : null}
+          {state.downloadedPath ? (
+            <p className="text-xs text-muted break-all">Downloaded file: {state.downloadedPath}</p>
+          ) : null}
+          {state.downloading ? (
+            <div className="space-y-2">
+              <div className="h-2 w-full rounded-full bg-black/10 overflow-hidden">
+                <div className="h-full rounded-full bg-success transition-all" style={{ width: `${Math.max(0, Math.min(100, state.progress || 0))}%` }} />
+              </div>
+              <p className="text-xs text-muted">Downloading... {state.progress || 0}%</p>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-on-light p-4">
+          <p className="text-sm text-muted">No pending update has been confirmed yet.</p>
+        </div>
+      )}
+
+      {state.message ? <p className="text-sm text-success">{state.message}</p> : null}
+      {state.error ? <p className="text-sm text-error">{state.error}</p> : null}
+
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" variant="secondary" onClick={checkForUpdates} disabled={busy || state.checking || state.downloading}>
+          {state.checking ? 'Checking...' : 'Check for Updates'}
+        </Button>
+        <Button type="button" onClick={downloadUpdate} disabled={busy || !state.updateAvailable || state.downloading}>
+          {state.downloading ? 'Downloading...' : 'Download Update'}
+        </Button>
+        <Button type="button" variant="secondary" onClick={installUpdate} disabled={busy || !state.canInstall}>
+          Install Update
+        </Button>
+      </div>
+    </section>
+  );
+}
+
 export default function SettingsPage({ user, onLogout, initialTab }) {
   const activeTab = initialTab || 'profile';
   const [name, setName] = useState(user?.name || '');
@@ -616,6 +772,8 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
       {activeTab === 'theme' && <ThemeTab />}
 
       {activeTab === 'featureToggles' && <FeatureTogglesTab />}
+
+      {activeTab === 'updates' && <UpdateTab />}
 
       {activeTab === 'printerConfig' && (
         <PrinterConfig />

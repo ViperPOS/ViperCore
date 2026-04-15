@@ -15,6 +15,9 @@ This folder contains Edge Functions for the setup/login flow.
   - Authenticated admin action to add employee with password+PIN
 - `admin-reset-pin`
   - Authenticated admin action to reset an employee PIN
+- `check-update`
+  - Validates tenant, subscription, and registered installation
+  - Returns signed download URL for the latest approved installer
 
 ## Shared helpers
 
@@ -31,6 +34,7 @@ supabase functions deploy initialize-tenant
 supabase functions deploy login
 supabase functions deploy admin-add-employee
 supabase functions deploy admin-reset-pin
+supabase functions deploy check-update
 ```
 
 ## Local serve (optional)
@@ -43,5 +47,15 @@ supabase functions serve --env-file supabase/.env.local
 
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
+- `SB_PROJECT_URL` and `SB_SERVICE_ROLE_KEY` are also supported by the shared client helper.
 
 Set them in Supabase project function secrets or local `.env` for testing.
+
+## Required schema additions
+
+Run the SQL in `supabase/001_initial_schema.sql` to create:
+
+- `tenant_devices` for installation fingerprints
+- `tenant_subscriptions` for expiry / entitlement checks
+- `app_releases` for platform-specific release metadata
+- `update_audit_log` for update decision history

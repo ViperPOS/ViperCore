@@ -30,8 +30,13 @@ export const ipcService = {
   on: (channel, callback) => {
     if (!api) return;
     const wrapped = api.on(channel, callback);
+    if (!wrapped) {
+      console.warn(`[ipcService] Failed to subscribe to IPC channel: ${channel}`);
+      return null;
+    }
     const channelMap = getChannelMap(channel);
     channelMap.set(callback, wrapped);
+    return wrapped;
   },
 
   once: (channel, callback) => {
@@ -43,7 +48,10 @@ export const ipcService = {
     if (!api) return;
     const channelMap = listenerMap.get(channel);
     const wrapper = channelMap?.get(callback);
-    if (!wrapper) return;
+    if (!wrapper) {
+      channelMap?.delete(callback);
+      return;
+    }
     api.removeListener(channel, wrapper);
     channelMap.delete(callback);
   },

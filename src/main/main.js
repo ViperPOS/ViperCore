@@ -1,8 +1,10 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog } = require("electron");
 const path = require("path");
+const crypto = require('crypto');
 const sqlite3 = require('sqlite3').verbose();
 const fs = require('fs');
 const printService = require('./services/printService');
+const UpdateService = require('./services/updateService');
 const {
     compareSecret,
     hashSecret,
@@ -164,6 +166,7 @@ async function initStore() {
     }
     store = new Store({
         defaults: {
+            appInstanceId: crypto.randomUUID(),
             printerConfig: {
                 vendorId: '0x0525',
                 productId: '0xA700'
@@ -362,6 +365,10 @@ async function ensureAppSetupSchema() {
     const cols = await dbAllAsync('PRAGMA table_info(AppSetup)');
     const hasRemoteProjectUrl = cols.some((col) => col.name === 'remote_project_url');
     const hasRemoteAnonKey = cols.some((col) => col.name === 'remote_anon_key');
+    const hasAppInstanceId = cols.some((col) => col.name === 'app_instance_id');
+    const hasAppVersion = cols.some((col) => col.name === 'app_version');
+    const hasPlatform = cols.some((col) => col.name === 'platform');
+    const hasArch = cols.some((col) => col.name === 'arch');
 
     if (!hasRemoteProjectUrl) {
         await dbRunAsync('ALTER TABLE AppSetup ADD COLUMN remote_project_url TEXT');
@@ -369,6 +376,22 @@ async function ensureAppSetupSchema() {
 
     if (!hasRemoteAnonKey) {
         await dbRunAsync('ALTER TABLE AppSetup ADD COLUMN remote_anon_key TEXT');
+    }
+
+    if (!hasAppInstanceId) {
+        await dbRunAsync('ALTER TABLE AppSetup ADD COLUMN app_instance_id TEXT');
+    }
+
+    if (!hasAppVersion) {
+        await dbRunAsync('ALTER TABLE AppSetup ADD COLUMN app_version TEXT');
+    }
+
+    if (!hasPlatform) {
+        await dbRunAsync('ALTER TABLE AppSetup ADD COLUMN platform TEXT');
+    }
+
+    if (!hasArch) {
+        await dbRunAsync('ALTER TABLE AppSetup ADD COLUMN arch TEXT');
     }
 }
 
@@ -694,7 +717,7 @@ function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
-        icon: path.join(projectRoot, "assets/images", "lassicorner.ico"),
+                icon: path.join(projectRoot, "assets/images", "favicon.ico"),
     show: false,
     fullscreen: true,
     webPreferences: {
@@ -780,6 +803,34 @@ async function runStartupTasks() {
 // === Setup IPC handlers ===
 function setupIPC() {
     printService.configure({ store, getFilePath });
+        const updateService = new UpdateService({
+            getSetupRow: getAppSetupRow,
+            getRemoteAuthConfig,
+            getAppIdentity: () => ({
+                appInstanceId: String(store.get('appInstanceId') || '').trim(),
+                appVersion: app.getVersion(),
+                platform: process.platform,
+                arch: process.arch,
+            }),
+        });
+
+        updateService.on('status', (payload) => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('update-status', payload);
+            }
+        });
+
+        updateService.on('progress', (payload) => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('update-progress', payload);
+            }
+        });
+
+        updateService.on('error', (payload) => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('update-error', payload);
+            }
+        });
 
     ipcMain.handle("login", async (event, payload) => {
     try {
@@ -800,6 +851,15 @@ function setupIPC() {
   ipcMain.handle("get-session-user", () => {
     return store.get("sessionUser") || null;
   });
+
+    ipcMain.handle('get-app-identity', () => {
+            return {
+                    appInstanceId: String(store.get('appInstanceId') || '').trim(),
+                    appVersion: app.getVersion(),
+                    platform: process.platform,
+                    arch: process.arch,
+            };
+    });
 
     ipcMain.handle('get-app-setup-status', async () => {
         try {
@@ -840,6 +900,10 @@ function setupIPC() {
             const setupPassword = String(payload?.setupPassword || '');
             const supabaseProjectUrl = String(payload?.supabaseProjectUrl || DEFAULT_SUPABASE_PROJECT_URL).trim();
             const supabaseAnonKey = String(payload?.supabaseAnonKey || '').trim();
+            const appInstanceId = String(payload?.appInstanceId || store.get('appInstanceId') || crypto.randomUUID()).trim();
+            const appVersion = String(payload?.appVersion || app.getVersion()).trim();
+            const platform = String(payload?.platform || process.platform).trim();
+            const arch = String(payload?.arch || process.arch).trim();
 
             const activationKey = String(payload?.activationKey || '').trim().toUpperCase();
             const masterPin = String(payload?.masterPin || '').trim();
@@ -897,6 +961,10 @@ function setupIPC() {
                 adminName,
                 adminUsername,
                 adminPassword,
+                appInstanceId,
+                appVersion,
+                platform,
+                arch,
             });
 
             const keyRow = await dbGetAsync(
@@ -918,8 +986,9 @@ function setupIPC() {
                 `INSERT INTO AppSetup (
                     id, is_initialized, activation_key, tenant_id, tenant_name, tenant_location,
                     contact_name, contact_phone, contact_email, contact_address, master_pin_hash,
+                    app_instance_id, app_version, platform, arch,
                     remote_project_url, remote_anon_key, activated_at, updated_at
-                ) VALUES (1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+                ) VALUES (1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
                 [
                     activationKey,
                     tenantId,
@@ -930,10 +999,16 @@ function setupIPC() {
                     contactEmail || null,
                     contactAddress || null,
                     hashSecret(masterPin),
+                    appInstanceId,
+                    appVersion,
+                    platform,
+                    arch,
                     supabaseProjectUrl,
                     supabaseAnonKey,
                 ]
             );
+
+            store.set('appInstanceId', appInstanceId);
 
             await insertUserRecord({
                 name: adminName,
@@ -979,6 +1054,22 @@ function setupIPC() {
         }
     });
 
+
+    ipcMain.handle('get-update-status', async () => {
+        return updateService.getStatus();
+    });
+
+    ipcMain.handle('check-for-updates', async () => {
+        return updateService.checkForUpdates();
+    });
+
+    ipcMain.handle('download-update', async () => {
+        return updateService.downloadLatestUpdate();
+    });
+
+    ipcMain.handle('install-update', async () => {
+        return updateService.installDownloadedUpdate();
+    });
   ipcMain.handle("logout", async () => {
     try {
       console.log("🔄 Starting logout process...");
@@ -2040,7 +2131,7 @@ ipcMain.on("print-kot-only", (event, { billItems, totalAmount, kot, orderId }) =
 // Function to generate only KOT (no customer receipt)
 function generateKOTOnly(items, totalAmount, kot, orderId) {
     const template = loadReceiptTemplate({
-        title: 'THE LASSI CORNER',
+        title: 'ALSPOS',
         subtitle: 'SJEC, VAMANJOOR',
         footer: 'Thank you for visiting!',
         itemHeader: 'ITEM',
@@ -2115,7 +2206,7 @@ ipcMain.on("print-bill-only", (event, { billItems, totalAmount, kot, orderId, da
 // Function to generate only customer receipt (no KOT)
 function generateBillOnly(items, totalAmount, kot, orderId, dateTime) {
     const template = loadReceiptTemplate({
-        title: 'THE LASSI CORNER',
+        title: 'ALSPOS',
         subtitle: 'SJEC, VAMANJOOR',
         footer: 'Thank you for visiting!',
         itemHeader: 'ITEM',
@@ -2233,7 +2324,7 @@ ipcMain.handle('test-printer', async (_event, { vendorId, productId } = {}) => {
 
 function generateTestReceipt(testData) {
     const template = store.get('receiptTemplate', {
-        title: 'THE LASSI CORNER',
+        title: 'ALSPOS',
         subtitle: 'SJEC, VAMANJOOR',
         footer: 'Thank you for visiting!',
         kotTitle: 'KITCHEN ORDER',
@@ -3931,6 +4022,10 @@ function initializeSchema() {
                 contact_email TEXT,
                 contact_address TEXT,
                 master_pin_hash TEXT,
+                app_instance_id TEXT,
+                app_version TEXT,
+                platform TEXT,
+                arch TEXT,
                 remote_project_url TEXT,
                 remote_anon_key TEXT,
                 activated_at TEXT,

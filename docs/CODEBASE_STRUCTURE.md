@@ -1,17 +1,19 @@
 # Codebase Structure
 
-This repository uses a src-first layout with offline-only runtime rules.
+This repository uses a src-first layout for the alspos Electron application.
 
 ## Folder Layout
 
 - `src/main/`
   - Main process runtime (`main.js`, `backup.js`, `restore.js`).
-- `src/renderer/modules/`
-  - Renderer feature modules.
-- `src/renderer/styles/`
-  - Renderer styles.
+- `src/renderer/`
+  - Renderer app entry (`main.jsx`, `App.jsx`), pages, components, hooks, services, and styles.
+- `src/resources/`
+  - Local app resource defaults (`businessInfo.json`, `receiptFormat.json`, `uiSettings.json`).
 - `main.js`, `backup.js`, `restore.js`
   - Thin root entry shims for Electron startup compatibility.
+- `supabase/`
+  - SQL schema, migrations, and Edge Functions.
 - `scripts/`
   - Repository guardrails and verification scripts.
 - `docs/`
@@ -25,19 +27,19 @@ Root should only contain:
 - Build/config files.
 
 Root must not contain duplicated renderer modules or renderer CSS files.
-Those belong in `src/renderer/modules` and `src/renderer/styles` only.
+Those belong in `src/renderer`.
 
-## Offline-Only Policy
+## Runtime Policy
 
-The app is intentionally offline-first.
+The app is local-first for POS runtime, with controlled Supabase usage for setup/auth and update authorization.
 
-- Do not reintroduce online bridge files (`getOnline.js`, `startMongoExpress.js`, `startMongoExpress.exe`).
-- Do not add cloud-sync dependencies (Mongo/WebSocket/Google API/update bridge stack).
-- Keep backup/restore local-only unless the architecture is explicitly changed.
+- Keep billing/runtime resilient for local execution.
+- Keep backup/restore local-only unless architecture is explicitly changed.
+- Keep Supabase interactions behind main-process or Edge Function boundaries.
 
 ## Verification Commands
 
-- `npm run verify:compat`
+- `npm run verify:arch`
   - Checks root shim targets.
 - `npm run verify:layout`
   - Checks folder policy, root cleanliness, HTML path usage, and offline dependency/resource policy.
