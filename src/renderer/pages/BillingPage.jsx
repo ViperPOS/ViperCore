@@ -146,8 +146,10 @@ export default function BillingPage({ user }) {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [showHoldBill, setShowHoldBill] = useState(true);
+  const [usePrinter, setUsePrinter] = useState(true);
   const [autoPrintBillOnSave, setAutoPrintBillOnSave] = useState(false);
   const [autoPrintKotOnSave, setAutoPrintKotOnSave] = useState(false);
+  const [printerHealth, setPrinterHealth] = useState({ state: 'disabled', message: 'Disabled' });
   const [enableTableSelection, setEnableTableSelection] = useState(false);
   const [lastBill, setLastBill] = useState(null);
   const [tables, setTables] = useState([]);
@@ -162,6 +164,7 @@ export default function BillingPage({ user }) {
   const pendingSavedBillRef = useRef(null);
   const autoPrintBillOnSaveRef = useRef(false);
   const autoPrintKotOnSaveRef = useRef(false);
+  const usePrinterRef = useRef(true);
 
   useEffect(() => {
     try {
@@ -294,12 +297,14 @@ export default function BillingPage({ user }) {
         const settings = await ipcService.invoke('load-ui-settings');
         if (!active) return;
         setShowHoldBill(settings?.showHoldBill !== false);
+        setUsePrinter(settings?.usePrinter !== false);
         setAutoPrintBillOnSave(settings?.autoPrintBillOnSave === true);
         setAutoPrintKotOnSave(settings?.autoPrintKotOnSave === true);
         setEnableTableSelection(settings?.enableTableSelection === true);
       } catch (err) {
         if (active) {
           setShowHoldBill(true);
+          setUsePrinter(true);
           setAutoPrintBillOnSave(false);
           setAutoPrintKotOnSave(false);
           setEnableTableSelection(false);
@@ -314,6 +319,51 @@ export default function BillingPage({ user }) {
     autoPrintBillOnSaveRef.current = autoPrintBillOnSave;
     autoPrintKotOnSaveRef.current = autoPrintKotOnSave;
   }, [autoPrintBillOnSave, autoPrintKotOnSave]);
+
+  useEffect(() => {
+    usePrinterRef.current = usePrinter;
+  }, [usePrinter]);
+
+  useEffect(() => {
+    let active = true;
+    let intervalId = null;
+
+    const refresh = async () => {
+      if (!usePrinter) {
+        if (active) setPrinterHealth({ state: 'disabled', message: 'Disabled' });
+        return;
+      }
+
+      try {
+        const status = await ipcService.invoke('printer:status');
+        if (!active) return;
+
+        if (status?.busy) {
+          setPrinterHealth({ state: 'busy', message: 'Busy' });
+          return;
+        }
+
+        if (status?.connected) {
+          setPrinterHealth({ state: 'ready', message: 'Ready' });
+          return;
+        }
+
+        setPrinterHealth({ state: 'error', message: status?.lastError ? `Error: ${status.lastError}` : 'Error' });
+      } catch (_) {
+        if (active) setPrinterHealth({ state: 'error', message: 'Error' });
+      }
+    };
+
+    refresh();
+    if (usePrinter) {
+      intervalId = setInterval(refresh, 3000);
+    }
+
+    return () => {
+      active = false;
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [usePrinter]);
 
   const loadBillingTables = async () => {
     setTableLoading(true);
@@ -417,24 +467,28 @@ export default function BillingPage({ user }) {
     }
   };
 
-  const sendBillPrint = (billData) => {
-    if (!billData) return;
-    ipcService.send('print-bill-only', {
+  const sendBillPrint = async (billData, retries = 2) => {
+    if (!usePrinterRef.current) return { success: false, error: 'Printer is disabled in Settings > Feature Toggles.' };
+    if (!billData) return { success: false, error: 'No bill available to print.' };
+    return ipcService.invoke('printer:print-bill', {
       billItems: billData.items.map((l) => ({ foodId: l.foodId, foodName: l.name, price: l.price, quantity: l.quantity })),
       totalAmount: billData.amount,
       kot: billData.kot,
       orderId: billData.orderId,
       dateTime: new Date().toLocaleString('en-IN'),
+      retries,
     });
   };
 
-  const sendKotPrint = (billData) => {
-    if (!billData) return;
-    ipcService.send('print-kot-only', {
+  const sendKotPrint = async (billData, retries = 2) => {
+    if (!usePrinterRef.current) return { success: false, error: 'Printer is disabled in Settings > Feature Toggles.' };
+    if (!billData) return { success: false, error: 'No bill available to print.' };
+    return ipcService.invoke('printer:print-kot', {
       billItems: billData.items.map((l) => ({ foodId: l.foodId, foodName: l.name, price: l.price, quantity: l.quantity })),
       totalAmount: billData.amount,
       kot: billData.kot,
       orderId: billData.orderId,
+      retries,
     });
   };
 
@@ -450,7 +504,7 @@ export default function BillingPage({ user }) {
   }, [itemSearch]);
 
   useEffect(() => {
-    const onSaved = (payload) => {
+    const onSaved = async (payload) => {
       if (billTimerRef.current) { clearTimeout(billTimerRef.current); billTimerRef.current = null; }
       setSaving(false);
       setMessage(`Bill saved. KOT ${payload?.kot ?? '-'} | Order ${payload?.orderId ?? '-'}`);
@@ -469,13 +523,29 @@ export default function BillingPage({ user }) {
 
       setLastBill(savedBill);
 
-      if (autoPrintBillOnSaveRef.current || autoPrintKotOnSaveRef.current) {
+      if (usePrinterRef.current && (autoPrintBillOnSaveRef.current || autoPrintKotOnSaveRef.current)) {
         setPrinting(true);
-        if (autoPrintBillOnSaveRef.current) {
-          sendBillPrint(savedBill);
-        }
-        if (autoPrintKotOnSaveRef.current) {
-          sendKotPrint(savedBill);
+        try {
+          const printJobs = [];
+          if (autoPrintBillOnSaveRef.current) {
+            printJobs.push(sendBillPrint(savedBill));
+          }
+          if (autoPrintKotOnSaveRef.current) {
+            printJobs.push(sendKotPrint(savedBill));
+          }
+
+          const results = await Promise.all(printJobs);
+          const failed = results.find((result) => !result?.success);
+          if (failed) {
+            setError(failed?.error || 'Auto print failed.');
+          } else {
+            setMessage((prev) => `${prev} Print completed.`);
+          }
+        } catch (printError) {
+          console.error('Auto print failed:', printError);
+          setError('Auto print failed.');
+        } finally {
+          setPrinting(false);
         }
       }
 
@@ -501,32 +571,14 @@ export default function BillingPage({ user }) {
       setError(payload?.error || 'Billing action failed.');
     };
 
-    const onPrintSuccess = () => {
-      setPrinting(false);
-      setMessage((prev) => prev + ' Print completed.');
-    };
-
-    const onPrintError = (msg) => {
-      setPrinting(false);
-      setError(msg || 'Print failed.');
-    };
-
     ipcService.on('bill-saved', onSaved);
     ipcService.on('bill-held', onHeld);
     ipcService.on('bill-error', onError);
-    ipcService.on('print-success-with-data', onPrintSuccess);
-    ipcService.on('print-success', onPrintSuccess);
-    ipcService.on('print-kot-success', onPrintSuccess);
-    ipcService.on('print-error', onPrintError);
 
     return () => {
       ipcService.removeListener('bill-saved', onSaved);
       ipcService.removeListener('bill-held', onHeld);
       ipcService.removeListener('bill-error', onError);
-      ipcService.removeListener('print-success-with-data', onPrintSuccess);
-      ipcService.removeListener('print-success', onPrintSuccess);
-      ipcService.removeListener('print-kot-success', onPrintSuccess);
-      ipcService.removeListener('print-error', onPrintError);
     };
   }, []);
 
@@ -669,18 +721,64 @@ export default function BillingPage({ user }) {
     }, BILL_TIMEOUT_MS);
   };
 
-  const printBill = () => {
+  const printBill = async () => {
     if (!lastBill) return;
     setPrinting(true);
     setError('');
-    sendBillPrint(lastBill);
+    try {
+      const result = await sendBillPrint(lastBill);
+      if (!result?.success) {
+        setError(result?.error || 'Print failed.');
+        return;
+      }
+      setMessage((prev) => `${prev ? `${prev} ` : ''}Bill printed.`.trim());
+    } catch (err) {
+      console.error('Bill print failed:', err);
+      setError('Print failed.');
+    } finally {
+      setPrinting(false);
+    }
   };
 
-  const printKot = () => {
+  const printKot = async () => {
     if (!lastBill) return;
     setPrinting(true);
     setError('');
-    sendKotPrint(lastBill);
+    try {
+      const result = await sendKotPrint(lastBill);
+      if (!result?.success) {
+        setError(result?.error || 'Print failed.');
+        return;
+      }
+      setMessage((prev) => `${prev ? `${prev} ` : ''}KOT printed.`.trim());
+    } catch (err) {
+      console.error('KOT print failed:', err);
+      setError('Print failed.');
+    } finally {
+      setPrinting(false);
+    }
+  };
+
+  const reprintLastReceipt = async () => {
+    if (!usePrinter) {
+      setError('Printer is disabled in Settings > Feature Toggles.');
+      return;
+    }
+    setPrinting(true);
+    setError('');
+    try {
+      const result = await ipcService.invoke('printer:reprint-last', { retries: 1 });
+      if (!result?.success) {
+        setError(result?.error || 'Reprint failed.');
+        return;
+      }
+      setMessage((prev) => `${prev ? `${prev} ` : ''}Last receipt reprinted.`.trim());
+    } catch (err) {
+      console.error('Reprint failed:', err);
+      setError('Reprint failed.');
+    } finally {
+      setPrinting(false);
+    }
   };
 
   const handleDiscountPercentChange = (value) => {
@@ -707,6 +805,28 @@ export default function BillingPage({ user }) {
             {enableTableSelection ? <p className="text-xs text-muted mt-1">{formatTableLabel(selectedTable)}</p> : null}
           </div>
           <div className="flex items-center gap-2">
+            <div
+              className="rounded-full px-3 py-1 text-xs font-semibold"
+              style={{
+                backgroundColor: printerHealth.state === 'ready'
+                  ? 'rgba(34, 197, 94, 0.16)'
+                  : printerHealth.state === 'busy'
+                    ? 'rgba(245, 158, 11, 0.16)'
+                    : printerHealth.state === 'disabled'
+                      ? 'rgba(107, 114, 128, 0.16)'
+                      : 'rgba(239, 68, 68, 0.16)',
+                color: printerHealth.state === 'ready'
+                  ? 'var(--status-success)'
+                  : printerHealth.state === 'busy'
+                    ? '#B45309'
+                    : printerHealth.state === 'disabled'
+                      ? 'var(--text-muted)'
+                      : 'var(--status-error)',
+              }}
+              title={printerHealth.message}
+            >
+              Printer: {printerHealth.message}
+            </div>
             {enableTableSelection ? (
               <Button variant="secondary" onClick={openTableModal} disabled={saving || tableBusy}>
                 Select Table
@@ -830,8 +950,9 @@ export default function BillingPage({ user }) {
 
         {lastBill && (
           <div className="flex gap-2">
-            <Button size="sm" variant="secondary" onClick={printBill} disabled={printing}>Print Bill</Button>
-            <Button size="sm" variant="secondary" onClick={printKot} disabled={printing}>Print KOT</Button>
+            <Button size="sm" variant="secondary" onClick={printBill} disabled={printing || !usePrinter}>Print Bill</Button>
+            <Button size="sm" variant="secondary" onClick={printKot} disabled={printing || !usePrinter}>Print KOT</Button>
+            <Button size="sm" variant="secondary" onClick={reprintLastReceipt} disabled={printing || !usePrinter}>Reprint Last</Button>
             <Button size="sm" variant="ghost" onClick={() => setLastBill(null)}>Dismiss</Button>
           </div>
         )}

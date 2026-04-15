@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
-  Receipt, MenuSquare, BookOpen,
-  BarChart3, Settings, LogOut, ChevronDown, ChevronRight,
+  Receipt, UtensilsCrossed, BookOpen,
+  BarChart3, Settings, LogOut, ChevronDown, ChevronRight, Tags,
 } from 'lucide-react';
 import BillingPage from '@/pages/BillingPage';
 import HistoryPage from '@/pages/HistoryPage';
@@ -14,8 +14,8 @@ import SearchOrderPage from '@/pages/SearchOrderPage';
 
 const navSections = [
   { key: 'billing',   label: 'Billing',   Icon: Receipt },
-  { key: 'menu',      label: 'Menu',      Icon: MenuSquare },
-  { key: 'categories', label: 'Categories', Icon: MenuSquare },
+  { key: 'menu',      label: 'Menu',      Icon: UtensilsCrossed },
+  { key: 'categories', label: 'Categories', Icon: Tags },
   { key: 'history',   label: 'History',   Icon: BookOpen, subViews: [
     { key: 'todaysOrders',    label: "Today's Orders" },
     { key: 'orderHistory',    label: 'Order History' },

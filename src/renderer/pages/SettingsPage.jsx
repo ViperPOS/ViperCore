@@ -131,6 +131,7 @@ function ThemeTab() {
 
 function FeatureTogglesTab() {
   const [showHoldBill, setShowHoldBill] = useState(true);
+  const [usePrinter, setUsePrinter] = useState(true);
   const [autoPrintBillOnSave, setAutoPrintBillOnSave] = useState(false);
   const [autoPrintKotOnSave, setAutoPrintKotOnSave] = useState(false);
   const [enableTableSelection, setEnableTableSelection] = useState(false);
@@ -150,6 +151,7 @@ function FeatureTogglesTab() {
         const settings = await ipcService.invoke('load-ui-settings');
         if (!mountedRef.current) return;
         setShowHoldBill(settings?.showHoldBill !== false);
+        setUsePrinter(settings?.usePrinter !== false);
         setAutoPrintBillOnSave(settings?.autoPrintBillOnSave === true);
         setAutoPrintKotOnSave(settings?.autoPrintKotOnSave === true);
         setEnableTableSelection(settings?.enableTableSelection === true);
@@ -171,6 +173,7 @@ function FeatureTogglesTab() {
     try {
       const result = await ipcService.invoke('save-ui-settings', {
         showHoldBill,
+        usePrinter,
         autoPrintBillOnSave,
         autoPrintKotOnSave,
         enableTableSelection,
@@ -206,10 +209,18 @@ function FeatureTogglesTab() {
 
       <label className="flex items-center justify-between gap-3 rounded-lg border border-on-light p-3">
         <div>
+          <p className="text-sm text-on-light">Use Printer</p>
+          <p className="text-xs text-muted mt-1">Master switch for all print actions and printer health checks in Billing.</p>
+        </div>
+        <input type="checkbox" checked={usePrinter} onChange={(e) => setUsePrinter(e.target.checked)} className="h-4 w-4" />
+      </label>
+
+      <label className="flex items-center justify-between gap-3 rounded-lg border border-on-light p-3">
+        <div>
           <p className="text-sm text-on-light">Auto Print Customer Bill After Save</p>
           <p className="text-xs text-muted mt-1">Automatically prints the final bill as soon as a bill is saved.</p>
         </div>
-        <input type="checkbox" checked={autoPrintBillOnSave} onChange={(e) => setAutoPrintBillOnSave(e.target.checked)} className="h-4 w-4" />
+        <input type="checkbox" checked={autoPrintBillOnSave} onChange={(e) => setAutoPrintBillOnSave(e.target.checked)} className="h-4 w-4" disabled={!usePrinter} />
       </label>
 
       <label className="flex items-center justify-between gap-3 rounded-lg border border-on-light p-3">
@@ -217,7 +228,7 @@ function FeatureTogglesTab() {
           <p className="text-sm text-on-light">Auto Print KOT After Save</p>
           <p className="text-xs text-muted mt-1">Automatically prints the kitchen order ticket as soon as a bill is saved.</p>
         </div>
-        <input type="checkbox" checked={autoPrintKotOnSave} onChange={(e) => setAutoPrintKotOnSave(e.target.checked)} className="h-4 w-4" />
+        <input type="checkbox" checked={autoPrintKotOnSave} onChange={(e) => setAutoPrintKotOnSave(e.target.checked)} className="h-4 w-4" disabled={!usePrinter} />
       </label>
 
       <label className="flex items-center justify-between gap-3 rounded-lg border border-on-light p-3">

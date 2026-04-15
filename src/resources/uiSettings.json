@@ -1,6 +1,7 @@
 {
   "showHoldBill": false,
   "themePreset": "navySunburst",
+  "usePrinter": true,
   "autoPrintBillOnSave": false,
   "autoPrintKotOnSave": false,
   "enableTableSelection": true

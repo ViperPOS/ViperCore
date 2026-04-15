@@ -1,9 +1,8 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog } = require("electron");
 const path = require("path");
 const sqlite3 = require('sqlite3').verbose();
-const escpos = require("escpos");
 const fs = require('fs');
-escpos.USB = require("escpos-usb");
+const printService = require('./services/printService');
 const {
     compareSecret,
     hashSecret,
@@ -87,9 +86,13 @@ async function ensureDatabaseFileInUserData() {
     if (fs.existsSync(bundledSeedDbPath)) {
         await fs.promises.copyFile(bundledSeedDbPath, userDataDbPath);
         console.log(`📦 Seed database copied to userData: ${userDataDbPath}`);
-    } else {
-        console.warn(`⚠️ Seed database not found at ${bundledSeedDbPath}. A new database will be created at ${userDataDbPath}.`);
+        return userDataDbPath;
     }
+
+    // Final-product path: create a brand-new local database file and let initializeSchema build all tables.
+    const fileHandle = await fs.promises.open(userDataDbPath, 'w');
+    await fileHandle.close();
+    console.log(`🆕 No seed database found. Created empty local database at: ${userDataDbPath}`);
 
     return userDataDbPath;
 }
@@ -650,29 +653,12 @@ async function authenticateByPin(pin) {
 }
 
 async function authenticateLoginPayload(payload) {
-    const setupRow = await getAppSetupRow();
     const initialized = await isAppInitialized();
     if (!initialized) {
         return null;
     }
 
     const method = String(payload?.method || 'password').toLowerCase();
-    const remoteConfig = getRemoteAuthConfig(setupRow);
-    if (remoteConfig) {
-        try {
-            const remoteResult = await callRemoteAuthFunction(remoteConfig, 'login', {
-                tenantId: setupRow.tenant_id,
-                method,
-                username: payload?.username,
-                password: payload?.password,
-                pin: payload?.pin,
-            });
-
-            return await ensureLocalUserFromRemote(remoteResult.user);
-        } catch (remoteError) {
-            console.error('Remote login failed, trying local fallback:', remoteError.message);
-        }
-    }
 
     if (method === 'pin') {
         const pin = String(payload?.pin || '');
@@ -793,6 +779,8 @@ async function runStartupTasks() {
 
 // === Setup IPC handlers ===
 function setupIPC() {
+    printService.configure({ store, getFilePath });
+
     ipcMain.handle("login", async (event, payload) => {
     try {
                         const user = await authenticateLoginPayload(payload);
@@ -1252,42 +1240,71 @@ function setupIPC() {
   });
 
   ipcMain.handle("get-printer-config", () => {
-    const config = store.get("printerConfig", {
-      vendorId: "0x0525",
-      productId: "0xA700",
-    });
-
-    return {
-      vendorId: config.vendorId,
-      productId: config.productId,
-      vendorIdDec: parseInt(config.vendorId, 16),
-      productIdDec: parseInt(config.productId, 16),
-    };
+        const config = printService.getStoredConfig();
+        if (!config) {
+            return {
+                vendorId: '0x0525',
+                productId: '0xA700',
+                vendorIdDec: 0x0525,
+                productIdDec: 0xA700,
+            };
+        }
+        return config;
   });
 
-  ipcMain.handle("save-printer-config", (event, config) => {
+    ipcMain.handle("save-printer-config", async (event, config) => {
     try {
-      if (!config || !config.vendorId || !config.productId) {
-        throw new Error("Both Vendor ID and Product ID are required");
+            const normalized = printService.normalizeConfig(config);
+            if (!normalized) {
+                throw new Error('Both Vendor ID and Product ID are required in hex or decimal format');
       }
 
-      const hexRegex = /^0x[0-9a-fA-F]{4}$/;
-      if (!hexRegex.test(config.vendorId) || !hexRegex.test(config.productId)) {
-        throw new Error("Invalid hexadecimal format");
-      }
+            store.set('printerConfig', {
+                vendorId: normalized.vendorId,
+                productId: normalized.productId,
+            });
 
-      const vendorId = parseInt(config.vendorId, 16);
-      const productId = parseInt(config.productId, 16);
-      if (isNaN(vendorId) || isNaN(productId)) {
-        throw new Error("Invalid hexadecimal values");
-      }
-
-      store.set("printerConfig", config);
-      return { success: true };
+            const initResult = await printService.init(normalized);
+            return {
+                success: true,
+                config: normalized,
+                ready: initResult.success,
+                warning: initResult.success ? '' : initResult.error,
+            };
     } catch (error) {
       return { success: false, error: error.message };
     }
   });
+
+    ipcMain.handle('printer:list', async () => {
+        return printService.listPrinters();
+    });
+
+    ipcMain.handle('printer:status', () => {
+        return printService.getStatus();
+    });
+
+    ipcMain.handle('printer:test', async (_event, payload) => {
+        const config = payload?.vendorId && payload?.productId
+            ? { vendorId: payload.vendorId, productId: payload.productId }
+            : null;
+        return printService.testPrint(config);
+    });
+
+    ipcMain.handle('printer:print-bill', async (_event, payload) => {
+        const retries = Number(payload?.retries ?? 2);
+        return printService.safePrint('bill', payload, retries);
+    });
+
+    ipcMain.handle('printer:print-kot', async (_event, payload) => {
+        const retries = Number(payload?.retries ?? 2);
+        return printService.safePrint('kot', payload, retries);
+    });
+
+    ipcMain.handle('printer:reprint-last', async (_event, payload) => {
+        const retries = Number(payload?.retries ?? 1);
+        return printService.reprintLast(retries);
+    });
 }
 
 // === App lifecycle ===
@@ -2006,54 +2023,18 @@ ipcMain.on('get-tax-on-items', (event, { startDate, endDate }) => {
 });
 //----------------------------------------------ANALYTICS ENDS HERE--------------------------------------------------------------
 
-let isPrinting = false;
 ipcMain.on("print-kot-only", (event, { billItems, totalAmount, kot, orderId }) => {
-    if (isPrinting) {
-        event.sender.send('print-error', 'Printer is busy');
-        return;
-    }
-    isPrinting = true;
-
-    try {
-        const config = store.get('printerConfig', {
-            vendorId: '0x0525',
-            productId: '0xA700'
-        });
-
-        const vendorId = parseInt(config.vendorId, 16);
-        const productId = parseInt(config.productId, 16);
-
-        if (isNaN(vendorId) || isNaN(productId)) {
-            throw new Error('Invalid printer configuration - please check Vendor/Product IDs');
-        }
-
-        const device = new escpos.USB(vendorId, productId);
-        const printer = new escpos.Printer(device, { encoding: 'UTF-8' });
-
-        device.open((err) => {
-            if (err) {
-                event.sender.send('print-error', `Printer connection failed: ${err.message}`);
-                return;
+    printService.safePrint('kot', { billItems, totalAmount, kot, orderId }, 2)
+        .then((result) => {
+            if (result?.success) {
+                event.sender.send('print-kot-success', { kot, orderId });
+            } else {
+                event.sender.send('print-error', result?.error || 'Print failed');
             }
-
-            // Generate only KOT commands (no customer receipt)
-            const commands = generateKOTOnly(billItems, totalAmount, kot, orderId);
-            
-            printer
-                .raw(Buffer.from(commands, 'utf8'))
-                .close((err) => {
-                    if (err) {
-                        event.sender.send('print-error', `Print failed: ${err.message}`);
-                    } else {
-                        event.sender.send('print-kot-success', { kot, orderId });
-                    }
-                });
+        })
+        .catch((error) => {
+            event.sender.send('print-error', `System error: ${error.message}`);
         });
-    } catch (error) {
-        event.sender.send('print-error', `System error: ${error.message}`);
-    } finally {
-        isPrinting = false;
-    }
 });
 
 // Function to generate only KOT (no customer receipt)
@@ -2118,52 +2099,17 @@ function saveReceiptTemplate(template) {
 }
 
 ipcMain.on("print-bill-only", (event, { billItems, totalAmount, kot, orderId, dateTime }) => {
-    if (isPrinting) {
-        event.sender.send('print-error', 'Printer is busy');
-        return;
-    }
-    isPrinting = true;
-
-    try {
-        const config = store.get('printerConfig', {
-            vendorId: '0x0525',
-            productId: '0xA700'
-        });
-
-        const vendorId = parseInt(config.vendorId, 16);
-        const productId = parseInt(config.productId, 16);
-
-        if (isNaN(vendorId) || isNaN(productId)) {
-            throw new Error('Invalid printer configuration - please check Vendor/Product IDs');
-        }
-
-        const device = new escpos.USB(vendorId, productId);
-        const printer = new escpos.Printer(device, { encoding: 'UTF-8' });
-
-        device.open((err) => {
-            if (err) {
-                event.sender.send('print-error', `Printer connection failed: ${err.message}`);
-                return;
+    printService.safePrint('bill', { billItems, totalAmount, kot, orderId, dateTime }, 2)
+        .then((result) => {
+            if (result?.success) {
+                event.sender.send('print-success');
+            } else {
+                event.sender.send('print-error', result?.error || 'Print failed');
             }
-
-            // Generate only customer receipt commands (no KOT)
-            const commands = generateBillOnly(billItems, totalAmount, kot, orderId, dateTime);
-            
-            printer
-                .raw(Buffer.from(commands, 'utf8'))
-                .close((err) => {
-                    if (err) {
-                        event.sender.send('print-error', `Print failed: ${err.message}`);
-                    } else {
-                        event.sender.send('print-success');
-                    }
-                });
+        })
+        .catch((error) => {
+            event.sender.send('print-error', `System error: ${error.message}`);
         });
-    } catch (error) {
-        event.sender.send('print-error', `System error: ${error.message}`);
-    } finally {
-        isPrinting = false;
-    }
 });
 
 // Function to generate only customer receipt (no KOT)
@@ -2280,53 +2226,9 @@ ipcMain.on('get-order-for-printing', (event, billno) => {
     });
 });
 
-ipcMain.handle('test-printer', async (event, { printerName, vendorId, productId, testData }) => {
-    if (isPrinting) {
-        event.sender.send('test-printer-error', 'Printer is busy');
-        return;
-    }
-    isPrinting = true;
-
-    try {
-        // Use config from store if not provided
-        const config = store.get('printerConfig', {
-            vendorId: '0x0525',
-            productId: '0xA700'
-        });
-        const vendorNum = parseInt(vendorId || config.vendorId, 16);
-        const productNum = parseInt(productId || config.productId, 16);
-
-        if (isNaN(vendorNum) || isNaN(productNum)) {
-            throw new Error('Invalid printer configuration - please check Vendor/Product IDs');
-        }
-
-        const device = new escpos.USB(vendorNum, productNum);
-        const printer = new escpos.Printer(device, { encoding: 'UTF-8' });
-
-        const commands = generateTestReceipt(testData);
-
-        device.open((err) => {
-            if (err) {
-                event.sender.send('test-printer-error', `Printer connection failed: ${err.message}`);
-                isPrinting = false;
-                return;
-            }
-
-            printer
-                .raw(Buffer.from(commands, 'utf8'))
-                .close((err) => {
-                    if (err) {
-                        event.sender.send('test-printer-error', `Print failed: ${err.message}`);
-                    } else {
-                        event.sender.send('test-printer-success', true);
-                    }
-                    isPrinting = false;
-                });
-        });
-    } catch (error) {
-        event.sender.send('test-printer-error', `System error: ${error.message}`);
-        isPrinting = false;
-    }
+ipcMain.handle('test-printer', async (_event, { vendorId, productId } = {}) => {
+    const config = vendorId && productId ? { vendorId, productId } : null;
+    return printService.testPrint(config);
 });
 
 function generateTestReceipt(testData) {
@@ -3762,6 +3664,7 @@ ipcMain.handle('load-ui-settings', async () => {
         return {
             showHoldBill: parsed?.showHoldBill !== false,
             themePreset: resolvedTheme,
+            usePrinter: parsed?.usePrinter !== false,
             autoPrintBillOnSave: parsed?.autoPrintBillOnSave === true,
             autoPrintKotOnSave: parsed?.autoPrintKotOnSave === true,
             enableTableSelection: parsed?.enableTableSelection === true,
@@ -3770,6 +3673,7 @@ ipcMain.handle('load-ui-settings', async () => {
         return {
             showHoldBill: true,
             themePreset: 'creamCharcoal',
+            usePrinter: true,
             autoPrintBillOnSave: false,
             autoPrintKotOnSave: false,
             enableTableSelection: false,
@@ -3797,6 +3701,9 @@ ipcMain.handle('save-ui-settings', async (event, settings) => {
                 settings?.themePreset,
                 normalizeThemePreset(existingSettings?.themePreset, 'creamCharcoal')
             ),
+            usePrinter: settings?.usePrinter !== undefined
+                ? settings.usePrinter !== false
+                : existingSettings?.usePrinter !== false,
             autoPrintBillOnSave: settings?.autoPrintBillOnSave !== undefined
                 ? settings.autoPrintBillOnSave === true
                 : existingSettings?.autoPrintBillOnSave === true,
