@@ -76,6 +76,8 @@ Deno.serve(async (req) => {
       });
     }
 
+    await supabase.rpc("expire_due_tenant_subscriptions", { p_tenant_id: tenant.id });
+
     const { data: subscription, error: subscriptionErr } = await supabase
       .from("tenant_subscriptions")
       .select("status, expires_at, grace_until, plan_name")
