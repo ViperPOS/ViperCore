@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { RefreshCw } from 'lucide-react';
 import ipcService from '@/services/ipcService';
 
 function localDateString(date = new Date()) {
@@ -832,7 +833,16 @@ export default function BillingPage({ user }) {
                 Select Table
               </Button>
             ) : null}
-            <Button variant="secondary" onClick={loadCategories} disabled={loading || saving}>Refresh</Button>
+            <Button
+              variant="secondary"
+              onClick={loadCategories}
+              disabled={loading || saving}
+              aria-label="Refresh categories"
+              title="Refresh categories"
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
+              <span className="sr-only">Refresh</span>
+            </Button>
           </div>
         </div>
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/dialogs';
+import { RefreshCw } from 'lucide-react';
 import ipcService from '@/services/ipcService';
 
 export default function CustomersPage() {
@@ -182,7 +183,16 @@ export default function CustomersPage() {
           ) : (
             <>
               <Button onClick={addCustomer} disabled={busy}>Add Customer</Button>
-              <Button variant="secondary" onClick={fetchCustomers} disabled={loading || busy}>Refresh</Button>
+              <Button
+                variant="secondary"
+                onClick={fetchCustomers}
+                disabled={loading || busy}
+                aria-label="Refresh customers"
+                title="Refresh customers"
+              >
+                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
+                <span className="sr-only">Refresh</span>
+              </Button>
             </>
           )}
         </div>
