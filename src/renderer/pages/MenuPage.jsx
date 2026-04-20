@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/dialogs';
+import { RefreshCw } from 'lucide-react';
 import ipcService from '@/services/ipcService';
 
 function ItemForm({ categories, initial, onPreviewChange, onSubmit, onCancel, busy, label }) {
@@ -370,7 +371,16 @@ export default function MenuPage() {
               className="h-10 w-64 max-w-full rounded-lg px-3 text-sm outline-none"
             />
             <Button onClick={() => { setShowAdd(true); setEditItem(null); }} disabled={busy}>Add Item</Button>
-            <Button variant="secondary" onClick={loadMenuItems} disabled={loading || busy}>Refresh</Button>
+            <Button
+              variant="secondary"
+              onClick={loadMenuItems}
+              disabled={loading || busy}
+              aria-label="Refresh menu items"
+              title="Refresh menu items"
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
+              <span className="sr-only">Refresh</span>
+            </Button>
           </div>
         </div>
       </section>

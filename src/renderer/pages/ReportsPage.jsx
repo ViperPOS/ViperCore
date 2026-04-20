@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { RefreshCw } from 'lucide-react';
 import ipcService from '@/services/ipcService';
 import { SalesOverviewTable, CategorySalesTable, TopItemsTable, TopCategoriesTable } from '@/components/DataTable';
 
@@ -228,7 +229,19 @@ export default function ReportsPage({ initialReport }) {
               </div>
             </>
           )}
-          <Button onClick={loadReports} disabled={loading}>{loading ? 'Loading...' : activeReport === 'dayEndSummary' ? 'Refresh' : 'Run Reports'}</Button>
+          <Button
+            onClick={loadReports}
+            disabled={loading}
+            aria-label={activeReport === 'dayEndSummary' ? 'Refresh day-end summary' : 'Run reports'}
+            title={activeReport === 'dayEndSummary' ? 'Refresh day-end summary' : 'Run reports'}
+          >
+            {loading ? 'Loading...' : activeReport === 'dayEndSummary' ? (
+              <>
+                <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                <span className="sr-only">Refresh</span>
+              </>
+            ) : 'Run Reports'}
+          </Button>
         </div>
       </section>
 
