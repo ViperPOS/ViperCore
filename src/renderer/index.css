@@ -17,6 +17,8 @@
   html, body {
     background-color: var(--bg-app);
     color: var(--text-on-light);
+    user-select: none;
+    -webkit-user-select: none;
   }
 }
 

@@ -72,7 +72,14 @@ function TableSelectionModal({
             <h3 className="text-lg font-black text-on-light">Select Table</h3>
             <p className="text-sm text-muted mt-1">Assign this bill to a table and manage your table list.</p>
           </div>
-          <Button type="button" variant="secondary" onClick={onClose}>Close</Button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-lg leading-none p-1 rounded hover:bg-hover transition-colors"
+            style={{ color: '#dc2626' }}
+          >
+            &#x2715;
+          </button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -80,24 +87,24 @@ function TableSelectionModal({
             <h4 className="text-sm font-bold text-on-light">Available Tables</h4>
             {loading ? <p className="text-sm text-muted">Loading tables...</p> : null}
             {!loading && tables.length === 0 ? <p className="text-sm text-muted">No tables found.</p> : null}
-            <div className="space-y-2 max-h-[340px] overflow-auto pr-1">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[340px] overflow-auto pr-1">
               {tables.map((table) => {
                 const isActive = Number(selectedTable?.tableId) === Number(table.tableId);
                 return (
-                  <div key={table.tableId} className="rounded-lg border border-on-light p-2 space-y-2">
-                    <button
-                      type="button"
-                      className="w-full text-left"
-                      onClick={() => onSelect(table)}
-                    >
-                      <p className="text-sm font-semibold text-on-light">{formatTableLabel(table)}</p>
-                      {isActive ? <p className="text-xs text-success mt-1">Selected</p> : null}
-                    </button>
-                    <div className="flex gap-2">
-                      <Button type="button" size="sm" variant="secondary" onClick={() => onEdit(table)} disabled={busy}>Edit</Button>
-                      <Button type="button" size="sm" variant="ghost" onClick={() => onDelete(table)} disabled={busy}>Delete</Button>
+                  <button
+                    key={table.tableId}
+                    type="button"
+                    className={`rounded-lg border p-3 text-left transition-all ${isActive ? 'border-success bg-success/10' : 'border-on-light hover:bg-hover'}`}
+                    onClick={() => onSelect(table)}
+                  >
+                    <p className="text-sm font-semibold text-on-light">{formatTableLabel(table)}</p>
+                    {isActive ? <p className="text-xs text-success mt-1">Selected</p> : null}
+                    <div className="flex gap-1 mt-2">
+                      <Button type="button" size="sm" variant="secondary" onClick={(e) => { e.stopPropagation(); onEdit(table); }} disabled={busy}>Edit</Button>
+                      <Button type="button" size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); onDelete(table); }} disabled={busy}
+                        style={{ color: '#dc2626' }}>&#x2715;</Button>
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>
@@ -149,6 +156,7 @@ export default function BillingPage({ user }) {
   const [menuItems, setMenuItems] = useState([]);
   const [allItems, setAllItems] = useState([]);
   const [itemSearch, setItemSearch] = useState('');
+  const [vegFilter, setVegFilter] = useState('all');
   const [cart, setCart] = useState([]);
   const [discountPercent, setDiscountPercent] = useState('');
   const [discountAmount, setDiscountAmount] = useState('');
@@ -171,6 +179,9 @@ export default function BillingPage({ user }) {
   const [tableLoading, setTableLoading] = useState(false);
   const [tableBusy, setTableBusy] = useState(false);
   const [tableForm, setTableForm] = useState({ tableId: null, tableNumber: '', tableName: '' });
+  const [heldBills, setHeldBills] = useState([]);
+  const [heldBillsOpen, setHeldBillsOpen] = useState(false);
+  const [loadingHeld, setLoadingHeld] = useState(false);
   const mountedRef = useRef(true);
   const billTimerRef = useRef(null);
   const draftLoadedRef = useRef(false);
@@ -287,6 +298,7 @@ export default function BillingPage({ user }) {
   useEffect(() => {
     mountedRef.current = true;
     loadCategories();
+    loadAllItems();
     return () => { mountedRef.current = false; };
   }, []);
 
@@ -633,14 +645,29 @@ export default function BillingPage({ user }) {
   }, [cart]);
 
   const filteredMenuItems = useMemo(() => {
-    const sourceItems = itemSearch.trim() ? allItems : menuItems;
     const query = itemSearch.trim().toLowerCase();
-    if (!query) return sourceItems;
-    return sourceItems.filter((item) =>
-      String(item?.fid ?? '').includes(query) ||
-      (item?.fname ?? '').toLowerCase().includes(query)
-    );
-  }, [menuItems, allItems, itemSearch]);
+    let sourceItems;
+    if (query) {
+      sourceItems = allItems;
+    } else if (selectedCategory) {
+      sourceItems = menuItems;
+    } else {
+      sourceItems = allItems;
+    }
+    let filtered = sourceItems;
+    if (query) {
+      filtered = filtered.filter((item) =>
+        String(item?.fid ?? '').includes(query) ||
+        (item?.fname ?? '').toLowerCase().includes(query)
+      );
+    }
+    if (vegFilter === 'veg') {
+      filtered = filtered.filter((item) => item.veg);
+    } else if (vegFilter === 'nonveg') {
+      filtered = filtered.filter((item) => !item.veg);
+    }
+    return filtered;
+  }, [menuItems, allItems, itemSearch, vegFilter, selectedCategory]);
 
   const computedDiscount = useMemo(() => {
     const pct = Number(discountPercent || 0);
@@ -650,6 +677,9 @@ export default function BillingPage({ user }) {
     }
     if (pct < 0 || amt < 0) {
       return { value: 0, invalid: true, reason: 'Discount cannot be negative.' };
+    }
+    if (pct > 100) {
+      return { value: 0, invalid: true, reason: 'Discount percentage cannot exceed 100%.' };
     }
     if (pct > 0) {
       return { value: (subtotal * pct) / 100, invalid: false, reason: '' };
@@ -665,6 +695,55 @@ export default function BillingPage({ user }) {
   }, [subtotal, computedDiscount.value]);
 
   const toOrderItems = () => cart.map((line) => ({ foodId: line.foodId, quantity: line.quantity }));
+
+  const loadHeldBills = async () => {
+    setLoadingHeld(true);
+    try {
+      const result = await ipcService.requestReply('get-held-orders', 'held-orders-data', undefined);
+      setHeldBills(Array.isArray(result) ? result : []);
+    } catch (err) {
+      console.error('Failed to load held bills:', err);
+      setHeldBills([]);
+    } finally {
+      setLoadingHeld(false);
+    }
+  };
+
+  const restoreHeldBill = async (heldId) => {
+    try {
+      const details = await ipcService.requestReply('get-held-order-details', 'held-order-details-data', heldId);
+      const items = Array.isArray(details) ? details : [];
+      if (items.length === 0) {
+        setError('No items found in this held bill.');
+        return;
+      }
+      const cartItems = items.map((it) => ({
+        foodId: it.foodid,
+        name: it.fname ?? 'Unknown',
+        price: Number(it.price ?? 0),
+        quantity: Number(it.quantity ?? 1),
+      }));
+      setCart(cartItems);
+      setHeldBillsOpen(false);
+      setMessage('Held bill restored to cart.');
+      await ipcService.requestReply('delete-held-order', 'held-order-deleted', heldId);
+      await loadHeldBills();
+    } catch (err) {
+      console.error('Failed to restore held bill:', err);
+      setError('Could not restore held bill.');
+    }
+  };
+
+  const deleteHeldBill = async (heldId) => {
+    try {
+      await ipcService.requestReply('delete-held-order', 'held-order-deleted', heldId);
+      await loadHeldBills();
+      setMessage('Held bill deleted.');
+    } catch (err) {
+      console.error('Failed to delete held bill:', err);
+      setError('Could not delete held bill.');
+    }
+  };
 
   const saveBill = () => {
     if (cart.length === 0) {
@@ -858,18 +937,55 @@ export default function BillingPage({ user }) {
           </div>
         </div>
 
-        <div className="max-w-sm">
-          <label className="text-xs text-muted uppercase mb-1 block">Search Items</label>
-          <input
-            value={itemSearch}
-            onChange={(e) => setItemSearch(e.target.value)}
-            placeholder="Search any item by name or ID"
-            className="surface-input h-10 w-full rounded-lg px-3 text-sm"
-          />
+        <div className="flex flex-wrap items-end gap-4">
+          <div className="max-w-sm flex-1">
+            <label className="text-xs text-muted uppercase mb-1 block">Search Items</label>
+            <input
+              value={itemSearch}
+              onChange={(e) => setItemSearch(e.target.value)}
+              placeholder="Search any item by name or ID"
+              className="surface-input h-10 w-full rounded-lg px-3 text-sm"
+            />
+          </div>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant={vegFilter === 'all' ? 'default' : 'secondary'}
+              onClick={() => setVegFilter('all')}
+            >
+              All
+            </Button>
+            <Button
+              size="sm"
+              variant={vegFilter === 'veg' ? 'default' : 'secondary'}
+              onClick={() => setVegFilter('veg')}
+              style={vegFilter === 'veg' ? {} : { color: '#16a34a' }}
+            >
+              <span className="inline-block w-2.5 h-2.5 rounded-full mr-1" style={{ backgroundColor: '#16a34a' }} />
+              Veg
+            </Button>
+            <Button
+              size="sm"
+              variant={vegFilter === 'nonveg' ? 'default' : 'secondary'}
+              onClick={() => setVegFilter('nonveg')}
+              style={vegFilter === 'nonveg' ? {} : { color: '#dc2626' }}
+            >
+              <span className="inline-block w-2.5 h-2.5 rounded-full mr-1" style={{ backgroundColor: '#dc2626' }} />
+              Non-Veg
+            </Button>
+          </div>
         </div>
 
-        <div className="overflow-x-auto pb-1">
-          <div className="flex flex-nowrap gap-2 min-w-max">
+        <div className="overflow-y-auto max-h-32 pb-1">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant={selectedCategory === '' ? 'default' : 'secondary'}
+              onClick={() => setSelectedCategory('')}
+              disabled={Boolean(itemSearch.trim())}
+            >
+              All
+            </Button>
             {categories.map((category) => (
               <Button
                 key={category.catid ?? category.catname}
@@ -895,7 +1011,14 @@ export default function BillingPage({ user }) {
                 onClick={() => addToCart(item)}
                 className="rounded-xl border border-on-light bg-input hover:bg-hover p-3 text-left"
               >
-                <p className="font-semibold text-on-light">{item.fname ?? 'Unknown'}</p>
+                <div className="flex items-start justify-between gap-2">
+                  <p className="font-semibold text-on-light">{item.fname ?? 'Unknown'}</p>
+                  <span
+                    className="inline-block w-3 h-3 rounded-full shrink-0 mt-1"
+                    style={{ backgroundColor: item.veg ? '#16a34a' : '#dc2626' }}
+                    title={item.veg ? 'Vegetarian' : 'Non-Vegetarian'}
+                  />
+                </div>
                 <p className="text-sm text-muted mt-1">{formatCurrency(item.cost)}</p>
               </button>
             ))}
@@ -979,8 +1102,9 @@ export default function BillingPage({ user }) {
           </div>
         )}
 
-        <div className={`grid gap-2 ${showHoldBill ? 'grid-cols-2' : 'grid-cols-1'}`}>
+        <div className={`grid gap-2 ${showHoldBill ? 'grid-cols-3' : 'grid-cols-2'}`}>
           {showHoldBill ? <Button variant="secondary" onClick={holdBill} disabled={saving || cart.length === 0}>Hold Bill</Button> : null}
+          {showHoldBill ? <Button variant="secondary" onClick={() => { setHeldBillsOpen(true); loadHeldBills(); }}>View Held Bills</Button> : null}
           <Button onClick={saveBill} disabled={saving || cart.length === 0}>{saving ? 'Processing...' : 'Save Bill'}</Button>
         </div>
       </section>
@@ -1003,6 +1127,49 @@ export default function BillingPage({ user }) {
         onEdit={(table) => setTableForm({ tableId: table.tableId, tableNumber: String(table.tableNumber || ''), tableName: String(table.tableName || '') })}
         onDelete={deleteTable}
       />
+
+      {heldBillsOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="surface-card rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-black text-on-light">Held Bills</h3>
+              <button
+                type="button"
+                onClick={() => setHeldBillsOpen(false)}
+                className="text-lg leading-none p-1 rounded hover:bg-hover transition-colors"
+                style={{ color: '#dc2626' }}
+              >
+                &#x2715;
+              </button>
+            </div>
+            {loadingHeld ? (
+              <p className="text-sm text-muted">Loading held bills...</p>
+            ) : heldBills.length === 0 ? (
+              <p className="text-sm text-muted">No held bills found.</p>
+            ) : (
+              <div className="space-y-2">
+                {heldBills.map((bill) => (
+                  <div key={bill.heldid} className="rounded-lg border border-on-light p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-semibold text-on-light">Bill #{bill.heldid}</p>
+                        <p className="text-xs text-muted mt-1">Cashier: {bill.cashier_name || '-'}</p>
+                        <p className="text-xs text-muted">Items: {bill.food_items || '-'}</p>
+                        <p className="text-sm font-medium text-on-light mt-1">{formatCurrency(bill.price)}</p>
+                      </div>
+                      <div className="flex gap-2 shrink-0">
+                        <Button size="sm" onClick={() => restoreHeldBill(bill.heldid)}>Restore</Button>
+                        <Button size="sm" variant="ghost" onClick={() => deleteHeldBill(bill.heldid)}
+                          style={{ color: '#dc2626' }}>&#x2715;</Button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -118,11 +118,6 @@ export default function PrinterConfig() {
       setError('Vendor ID and Product ID are required.');
       return;
     }
-    if (testedSignature !== signature) {
-      setSaving(false);
-      setError('Please run a successful test print before saving this printer selection.');
-      return;
-    }
     try {
       const result = await ipcService.invoke('save-printer-config', { vendorId, productId });
       if (!mountedRef.current) return;
@@ -182,7 +177,7 @@ export default function PrinterConfig() {
   }
 
   return (
-    <section className="surface-card rounded-2xl p-5 space-y-5 max-w-lg">
+    <section className="surface-card rounded-2xl p-5 space-y-5">
       <div>
         <h2 className="text-xl font-black text-on-light">Printer Configuration</h2>
         <p className="text-sm text-muted mt-1">Select a USB printer, test it, then save the configuration.</p>

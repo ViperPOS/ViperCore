@@ -51,11 +51,18 @@ export default function LoginPage({ onLogin, loading, error }) {
 
   return (
     <div
-      className="min-h-screen w-full flex items-center justify-center p-6"
+      className="min-h-screen w-full flex items-center justify-center p-6 relative overflow-hidden"
       style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-on-light)' }}
     >
       <div
-        className="w-full max-w-md rounded-2xl p-8"
+        className="absolute inset-0 opacity-[0.04]"
+        style={{
+          backgroundImage: 'radial-gradient(circle at 25% 25%, var(--color-a) 2px, transparent 2px), radial-gradient(circle at 75% 75%, var(--color-a) 1.5px, transparent 1.5px)',
+          backgroundSize: '60px 60px, 40px 40px',
+        }}
+      />
+      <div
+        className="w-full max-w-md rounded-2xl p-8 relative z-10"
         style={{
           backgroundColor: 'var(--color-a)',
           color: 'var(--text-on-dark)',

@@ -87,6 +87,9 @@ const allowedSendChannels = new Set([
   'get-deleted-orders',
   'clear-discounted-orders',
   'clear-deleted-orders',
+  'get-held-orders',
+  'get-held-order-details',
+  'delete-held-order',
 ]);
 
 const allowedReceiveChannels = new Set([
@@ -124,6 +127,9 @@ const allowedReceiveChannels = new Set([
   'best-in-category-response',
   'tax-on-items-response',
   'search-orders-response',
+  'held-orders-data',
+  'held-order-details-data',
+  'held-order-deleted',
 ]);
 
 function isAllowedChannel(channel, allowedSet, mode) {

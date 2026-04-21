@@ -3,6 +3,20 @@ import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/dialogs';
 import { RefreshCw } from 'lucide-react';
 import ipcService from '@/services/ipcService';
+import { useSortableData } from '@/hooks/useSortableData';
+
+function SortHeader({ label, sortKey, sortConfig, onSort }) {
+  const active = sortConfig.key === sortKey;
+  const arrow = active ? (sortConfig.direction === 'asc' ? ' [A]' : ' [D]') : '';
+  return (
+    <th
+      className="px-3 py-2 text-left text-xs uppercase text-muted cursor-pointer select-none hover:opacity-80"
+      onClick={() => onSort(sortKey)}
+    >
+      {label}{arrow}
+    </th>
+  );
+}
 
 export default function CustomersPage() {
   const [customers, setCustomers] = useState([]);
@@ -49,6 +63,8 @@ export default function CustomersPage() {
       (c.address ?? '').toLowerCase().includes(q)
     );
   }, [customers, search]);
+
+  const { sorted: sortedCustomers, sortConfig, requestSort } = useSortableData(filtered);
 
   const clearForm = () => {
     setEditing(null);
@@ -206,10 +222,10 @@ export default function CustomersPage() {
           <table className="w-full min-w-[620px]">
             <thead className="sticky top-0 z-10 bg-input border-b border-on-light">
               <tr>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">ID</th>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">Name</th>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">Phone</th>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">Address</th>
+                <SortHeader label="ID" sortKey="cid" sortConfig={sortConfig} onSort={requestSort} />
+                <SortHeader label="Name" sortKey="cname" sortConfig={sortConfig} onSort={requestSort} />
+                <SortHeader label="Phone" sortKey="phone" sortConfig={sortConfig} onSort={requestSort} />
+                <SortHeader label="Address" sortKey="address" sortConfig={sortConfig} onSort={requestSort} />
                 <th className="px-3 py-2 text-left text-xs uppercase text-muted">Actions</th>
               </tr>
             </thead>
@@ -217,10 +233,10 @@ export default function CustomersPage() {
               {loading ? (
                 <tr><td colSpan={5} className="px-3 py-8 text-sm text-muted">Loading customers...</td></tr>
               ) : null}
-              {!loading && filtered.length === 0 ? (
+              {!loading && sortedCustomers.length === 0 ? (
                 <tr><td colSpan={5} className="px-3 py-8 text-sm text-muted">No customers found.</td></tr>
               ) : null}
-              {!loading && filtered.map((customer, i) => (
+              {!loading && sortedCustomers.map((customer, i) => (
                 <tr key={customer.cid ?? `c-${i}`} className={`border-b border-subtle ${editing === customer.cid ? '' : ''}`}>
                   <td className="px-3 py-2 text-sm text-on-light">{customer.cid ?? '-'}</td>
                   <td className="px-3 py-2 text-sm font-medium text-on-light">{customer.cname ?? '-'}</td>

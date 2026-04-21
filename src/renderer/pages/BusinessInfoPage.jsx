@@ -27,7 +27,14 @@ export default function BusinessInfoPage() {
       try {
         const data = await ipcService.invoke('load-business-info');
         if (!mountedRef.current) return;
-        setInfo(data || {});
+        const safe = {};
+        if (data && typeof data === 'object') {
+          for (const f of FIELDS) {
+            const val = data[f.key];
+            safe[f.key] = typeof val === 'string' ? val : '';
+          }
+        }
+        setInfo(safe);
       } catch (err) {
         console.error('Failed to load business info:', err);
         if (mountedRef.current) setError('Could not load business information.');
@@ -63,7 +70,7 @@ export default function BusinessInfoPage() {
   }
 
   return (
-    <section className="surface-card rounded-2xl p-5 space-y-4 max-w-lg">
+    <section className="surface-card rounded-2xl p-5 space-y-4">
       <div>
         <h2 className="text-xl font-black text-on-light">Business Information</h2>
         <p className="text-sm text-muted mt-1">Edit your business details for receipts and reports.</p>

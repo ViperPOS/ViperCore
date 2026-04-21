@@ -8,8 +8,16 @@ function DialogShell({ title, children, onClose }) {
         className="surface-card w-full max-w-md rounded-2xl p-5 shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="mb-4">
+        <div className="flex items-start justify-between mb-4">
           <h3 className="text-lg font-black text-on-light">{title}</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-lg leading-none p-1 rounded hover:bg-hover transition-colors"
+            style={{ color: '#dc2626' }}
+          >
+            &#x2715;
+          </button>
         </div>
         {children}
       </div>

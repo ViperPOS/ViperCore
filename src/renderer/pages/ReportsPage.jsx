@@ -3,6 +3,21 @@ import { Button } from '@/components/ui/button';
 import { RefreshCw } from 'lucide-react';
 import ipcService from '@/services/ipcService';
 import { SalesOverviewTable, CategorySalesTable, TopItemsTable, TopCategoriesTable } from '@/components/DataTable';
+import { exportToExcel } from '@/lib/exportExcel';
+import { useSortableData } from '@/hooks/useSortableData';
+
+function SortHeader({ label, sortKey, sortConfig, onSort }) {
+  const active = sortConfig.key === sortKey;
+  const arrow = active ? (sortConfig.direction === 'asc' ? ' [A]' : ' [D]') : '';
+  return (
+    <th
+      className="px-3 py-2 text-left text-xs uppercase text-muted cursor-pointer select-none hover:opacity-80"
+      onClick={() => onSort(sortKey)}
+    >
+      {label}{arrow}
+    </th>
+  );
+}
 
 function localDateString(date = new Date()) {
   const year = date.getFullYear();
@@ -42,6 +57,7 @@ export default function ReportsPage({ initialReport }) {
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
   const [activeReport, setActiveReport] = useState(initialReport || 'dayEndSummary');
   const mountedRef = useRef(true);
@@ -60,6 +76,12 @@ export default function ReportsPage({ initialReport }) {
     revenue: 0, sales: 0, tax: 0, discounted: 0, deleted: 0, yesterdayRevenue: 0,
     mostSoldItems: [], mostSoldCategories: [], highestRevenueItems: [], highestRevenueCategory: [],
   });
+
+  const { sorted: sortedDiscountedOrders, sortConfig: sortConfigDiscounted, requestSort: requestSortDiscounted } = useSortableData(discountedOrders);
+  const { sorted: sortedItemSummary, sortConfig: sortConfigItem, requestSort: requestSortItem } = useSortableData(itemSummary);
+  const { sorted: sortedEmployeeAnalysis, sortConfig: sortConfigEmployee, requestSort: requestSortEmployee } = useSortableData(employeeAnalysis);
+  const { sorted: sortedBestInCategory, sortConfig: sortConfigBest, requestSort: requestSortBest } = useSortableData(bestInCategory);
+  const { sorted: sortedTaxOnItems, sortConfig: sortConfigTax, requestSort: requestSortTax } = useSortableData(taxOnItems);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -117,6 +139,10 @@ export default function ReportsPage({ initialReport }) {
   const loadDateRangeReports = useCallback(async () => {
     if (!startDate || !endDate) {
       setError('Start date and end date are required.');
+      return;
+    }
+    if (startDate > endDate) {
+      setError('End date cannot be earlier than start date.');
       return;
     }
 
@@ -178,14 +204,116 @@ export default function ReportsPage({ initialReport }) {
   useEffect(() => {
     if (activeReport === 'dayEndSummary') {
       loadDayEnd();
+    } else {
+      loadDateRangeReports();
     }
-  }, [activeReport, loadDayEnd]);
+  }, [activeReport, loadDayEnd, loadDateRangeReports]);
 
   const loadReports = () => {
     if (activeReport === 'dayEndSummary') {
       loadDayEnd();
     } else {
       loadDateRangeReports();
+    }
+  };
+
+  const exportCurrentReport = async () => {
+    setExporting(true);
+    try {
+      const configs = {
+        salesOverview: {
+          filename: 'sales-overview',
+          columns: [
+            { header: 'Date', accessor: (r) => formatDate(r.date) },
+            { header: 'Orders', accessor: (r) => r.totalSales ?? 0 },
+            { header: 'Revenue', accessor: (r) => r.totalRevenue ?? 0 },
+          ],
+          rows: salesOverview,
+        },
+        categorySales: {
+          filename: 'category-sales',
+          columns: [
+            { header: 'Category', accessor: (r) => r.categoryName ?? '-' },
+            { header: 'Units Sold', accessor: (r) => r.totalQuantity ?? 0 },
+            { header: 'Revenue', accessor: (r) => r.totalRevenue ?? 0 },
+          ],
+          rows: categorySales,
+        },
+        discountedOrders: {
+          filename: 'discounted-orders',
+          columns: [
+            { header: 'Bill', accessor: (r) => r.billno ?? '-' },
+            { header: 'Date', accessor: (r) => formatDate(r.date) },
+            { header: 'Initial', accessor: (r) => r.Initial_price ?? 0 },
+            { header: 'Discount %', accessor: (r) => Number(r.discount_percentage || 0).toFixed(2) },
+            { header: 'Discount Amt', accessor: (r) => r.discount_amount ?? 0 },
+            { header: 'Final', accessor: (r) => r.Final_Price ?? 0 },
+          ],
+          rows: discountedOrders,
+        },
+        topSellingItems: {
+          filename: 'top-selling-items',
+          columns: [
+            { header: 'Date', accessor: (r) => formatDate(r.date) },
+            { header: 'Top Item(s)', accessor: (r) => (r.top_items ?? []).join(', ') },
+          ],
+          rows: topItems,
+        },
+        topSellingCategory: {
+          filename: 'top-selling-categories',
+          columns: [
+            { header: 'Date', accessor: (r) => formatDate(r.date) },
+            { header: 'Category', accessor: (r) => (r.top_categories ?? []).join(', ') },
+            { header: 'Units', accessor: (r) => r.totalUnits ?? 0 },
+          ],
+          rows: topCategories,
+        },
+        itemSummary: {
+          filename: 'item-summary',
+          columns: [
+            { header: 'Category', accessor: (r) => r.categoryName ?? '-' },
+            { header: 'Item', accessor: (r) => r.item ?? '-' },
+            { header: 'Qty', accessor: (r) => r.quantity ?? 0 },
+            { header: 'Revenue', accessor: (r) => r.revenue ?? 0 },
+          ],
+          rows: itemSummary,
+        },
+        employeeAnalysis: {
+          filename: 'employee-analysis',
+          columns: [
+            { header: 'Name', accessor: (r) => r.name ?? '-' },
+            { header: 'Orders', accessor: (r) => r.order_count ?? 0 },
+            { header: 'Units Sold', accessor: (r) => r.total_units ?? 0 },
+            { header: 'Revenue', accessor: (r) => r.total_revenue ?? 0 },
+          ],
+          rows: employeeAnalysis,
+        },
+        bestInCategory: {
+          filename: 'best-in-category',
+          columns: [
+            { header: 'Category', accessor: (r) => r.catname ?? '-' },
+            { header: 'Top Item(s)', accessor: (r) => (r.top_items ?? []).join(', ') },
+          ],
+          rows: bestInCategory,
+        },
+        taxOnItems: {
+          filename: 'tax-on-items',
+          columns: [
+            { header: 'Item', accessor: (r) => r.fname ?? '-' },
+            { header: 'Qty', accessor: (r) => r.total_quantity ?? 0 },
+            { header: 'SGST', accessor: (r) => r.total_sgst ?? 0 },
+            { header: 'CGST', accessor: (r) => r.total_cgst ?? 0 },
+            { header: 'Tax', accessor: (r) => r.total_tax ?? 0 },
+          ],
+          rows: taxOnItems,
+        },
+      };
+      const cfg = configs[activeReport];
+      if (cfg) {
+        await exportToExcel({ filename: cfg.filename, columns: cfg.columns, rows: cfg.rows });
+      }
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -245,6 +373,11 @@ export default function ReportsPage({ initialReport }) {
               </>
             ) : 'Run Reports'}
           </Button>
+          {showDateRange && (
+            <Button variant="outline" onClick={exportCurrentReport} disabled={exporting}>
+              {exporting ? 'Exporting...' : 'Export Excel'}
+            </Button>
+          )}
         </div>
       </section>
 
@@ -316,23 +449,23 @@ export default function ReportsPage({ initialReport }) {
         </section>
 
         <section className="surface-card rounded-2xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-on-light"><h3 className="font-bold text-on-light">Discounted Orders</h3></div>
+          <div className="px-4 py-3 border-b border-on-light flex items-center justify-between"><h3 className="font-bold text-on-light">Discounted Orders</h3><Button variant="outline" size="sm" onClick={() => exportToExcel({ filename: 'discounted-orders', columns: [{ header: 'Bill', accessor: (r) => r.billno ?? '-' }, { header: 'Date', accessor: (r) => formatDate(r.date) }, { header: 'Initial', accessor: (r) => r.Initial_price ?? 0 }, { header: 'Discount %', accessor: (r) => Number(r.discount_percentage || 0).toFixed(2) }, { header: 'Discount Amt', accessor: (r) => r.discount_amount ?? 0 }, { header: 'Final', accessor: (r) => r.Final_Price ?? 0 }], rows: sortedDiscountedOrders })}>Export</Button></div>
           <div className="max-h-[calc(100dvh-14rem)] overflow-auto">
             <table className="w-full min-w-[860px]">
               <thead className="sticky top-0 z-10 bg-input border-b border-on-light">
                 <tr>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Bill</th>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Date</th>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Initial</th>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Discount %</th>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Discount Amt</th>
-                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Final</th>
+                  <SortHeader label="Bill" sortKey="billno" sortConfig={sortConfigDiscounted} onSort={requestSortDiscounted} />
+                  <SortHeader label="Date" sortKey="date" sortConfig={sortConfigDiscounted} onSort={requestSortDiscounted} />
+                  <SortHeader label="Initial" sortKey="Initial_price" sortConfig={sortConfigDiscounted} onSort={requestSortDiscounted} />
+                  <SortHeader label="Discount %" sortKey="discount_percentage" sortConfig={sortConfigDiscounted} onSort={requestSortDiscounted} />
+                  <SortHeader label="Discount Amt" sortKey="discount_amount" sortConfig={sortConfigDiscounted} onSort={requestSortDiscounted} />
+                  <SortHeader label="Final" sortKey="Final_Price" sortConfig={sortConfigDiscounted} onSort={requestSortDiscounted} />
                 </tr>
               </thead>
               <tbody>
-                {discountedOrders.length === 0 ? (
+                {sortedDiscountedOrders.length === 0 ? (
                   <tr><td colSpan={6} className="px-3 py-6 text-sm text-muted">No discounted orders for this range.</td></tr>
-                ) : discountedOrders.map((row, i) => (
+                ) : sortedDiscountedOrders.map((row, i) => (
                   <tr key={row.billno ?? `disc-${i}`} className="border-b border-subtle">
                     <td className="px-3 py-2 text-sm text-on-light">{row.billno ?? '-'}</td>
                     <td className="px-3 py-2 text-sm text-on-light">{formatDate(row.date)}</td>
@@ -369,21 +502,21 @@ export default function ReportsPage({ initialReport }) {
 
       {activeReport === 'itemSummary' && (
       <section className="surface-card rounded-2xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-on-light"><h3 className="font-bold text-on-light">Item Summary</h3></div>
+        <div className="px-4 py-3 border-b border-on-light flex items-center justify-between"><h3 className="font-bold text-on-light">Item Summary</h3><Button variant="outline" size="sm" onClick={() => exportToExcel({ filename: 'item-summary', columns: [{ header: 'Category', accessor: (r) => r.categoryName ?? '-' }, { header: 'Item', accessor: (r) => r.item ?? '-' }, { header: 'Qty', accessor: (r) => r.quantity ?? 0 }, { header: 'Revenue', accessor: (r) => r.revenue ?? 0 }], rows: sortedItemSummary })}>Export</Button></div>
         <div className="max-h-[calc(100dvh-14rem)] overflow-auto">
           <table className="w-full min-w-[580px]">
             <thead className="sticky top-0 z-10 bg-input border-b border-on-light">
               <tr>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">Category</th>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">Item</th>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">Qty</th>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">Revenue</th>
+                <SortHeader label="Category" sortKey="categoryName" sortConfig={sortConfigItem} onSort={requestSortItem} />
+                <SortHeader label="Item" sortKey="item" sortConfig={sortConfigItem} onSort={requestSortItem} />
+                <SortHeader label="Qty" sortKey="quantity" sortConfig={sortConfigItem} onSort={requestSortItem} />
+                <SortHeader label="Revenue" sortKey="revenue" sortConfig={sortConfigItem} onSort={requestSortItem} />
               </tr>
             </thead>
             <tbody>
-              {itemSummary.length === 0 ? (
+              {sortedItemSummary.length === 0 ? (
                 <tr><td colSpan={4} className="px-3 py-6 text-sm text-muted">No item summary data.</td></tr>
-              ) : itemSummary.map((row, i) => (
+              ) : sortedItemSummary.map((row, i) => (
                 <tr key={`${row.item ?? 'x'}-${i}`} className="border-b border-subtle">
                   <td className="px-3 py-2 text-sm text-muted">{row.categoryName ?? '-'}</td>
                   <td className="px-3 py-2 text-sm font-medium text-on-light">{row.item ?? '-'}</td>
@@ -399,21 +532,21 @@ export default function ReportsPage({ initialReport }) {
 
       {activeReport === 'employeeAnalysis' && (
       <section className="surface-card rounded-2xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-on-light"><h3 className="font-bold text-on-light">Employee Analysis</h3></div>
+        <div className="px-4 py-3 border-b border-on-light flex items-center justify-between"><h3 className="font-bold text-on-light">Employee Analysis</h3><Button variant="outline" size="sm" onClick={() => exportToExcel({ filename: 'employee-analysis', columns: [{ header: 'Name', accessor: (r) => r.name ?? '-' }, { header: 'Orders', accessor: (r) => r.order_count ?? 0 }, { header: 'Units Sold', accessor: (r) => r.total_units ?? 0 }, { header: 'Revenue', accessor: (r) => r.total_revenue ?? 0 }], rows: sortedEmployeeAnalysis })}>Export</Button></div>
         <div className="max-h-[calc(100dvh-14rem)] overflow-auto">
           <table className="w-full min-w-[580px]">
             <thead className="sticky top-0 z-10 bg-input border-b border-on-light">
               <tr>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">Name</th>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">Orders</th>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">Units Sold</th>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">Revenue</th>
+                <SortHeader label="Name" sortKey="name" sortConfig={sortConfigEmployee} onSort={requestSortEmployee} />
+                <SortHeader label="Orders" sortKey="order_count" sortConfig={sortConfigEmployee} onSort={requestSortEmployee} />
+                <SortHeader label="Units Sold" sortKey="total_units" sortConfig={sortConfigEmployee} onSort={requestSortEmployee} />
+                <SortHeader label="Revenue" sortKey="total_revenue" sortConfig={sortConfigEmployee} onSort={requestSortEmployee} />
               </tr>
             </thead>
             <tbody>
-              {employeeAnalysis.length === 0 ? (
+              {sortedEmployeeAnalysis.length === 0 ? (
                 <tr><td colSpan={4} className="px-3 py-6 text-sm text-muted">No employee data.</td></tr>
-              ) : employeeAnalysis.map((row, i) => (
+              ) : sortedEmployeeAnalysis.map((row, i) => (
                 <tr key={row.userid ?? `emp-${i}`} className="border-b border-subtle">
                   <td className="px-3 py-2 text-sm font-medium text-on-light">{row.name ?? '-'}</td>
                   <td className="px-3 py-2 text-sm text-on-light">{row.order_count ?? 0}</td>
@@ -429,19 +562,19 @@ export default function ReportsPage({ initialReport }) {
 
       {activeReport === 'bestInCategory' && (
       <section className="surface-card rounded-2xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-on-light"><h3 className="font-bold text-on-light">Best In Category</h3></div>
+        <div className="px-4 py-3 border-b border-on-light flex items-center justify-between"><h3 className="font-bold text-on-light">Best In Category</h3><Button variant="outline" size="sm" onClick={() => exportToExcel({ filename: 'best-in-category', columns: [{ header: 'Category', accessor: (r) => r.catname ?? '-' }, { header: 'Top Item(s)', accessor: (r) => (r.top_items ?? []).join(', ') }], rows: sortedBestInCategory })}>Export</Button></div>
         <div className="max-h-[calc(100dvh-14rem)] overflow-auto">
           <table className="w-full min-w-[460px]">
             <thead className="sticky top-0 z-10 bg-input border-b border-on-light">
               <tr>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">Category</th>
+                <SortHeader label="Category" sortKey="catname" sortConfig={sortConfigBest} onSort={requestSortBest} />
                 <th className="px-3 py-2 text-left text-xs uppercase text-muted">Top Item(s)</th>
               </tr>
             </thead>
             <tbody>
-              {bestInCategory.length === 0 ? (
+              {sortedBestInCategory.length === 0 ? (
                 <tr><td colSpan={2} className="px-3 py-6 text-sm text-muted">No data.</td></tr>
-              ) : bestInCategory.map((row, i) => (
+              ) : sortedBestInCategory.map((row, i) => (
                 <tr key={row.catid ?? `bic-${i}`} className="border-b border-subtle">
                   <td className="px-3 py-2 text-sm font-medium text-on-light">{row.catname ?? '-'}</td>
                   <td className="px-3 py-2 text-sm text-on-light">{(row.top_items ?? []).join(', ') || '-'}</td>
@@ -455,22 +588,22 @@ export default function ReportsPage({ initialReport }) {
 
       {activeReport === 'taxOnItems' && (
       <section className="surface-card rounded-2xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-on-light"><h3 className="font-bold text-on-light">Tax On Items</h3></div>
+        <div className="px-4 py-3 border-b border-on-light flex items-center justify-between"><h3 className="font-bold text-on-light">Tax On Items</h3><Button variant="outline" size="sm" onClick={() => exportToExcel({ filename: 'tax-on-items', columns: [{ header: 'Item', accessor: (r) => r.fname ?? '-' }, { header: 'Qty', accessor: (r) => r.total_quantity ?? 0 }, { header: 'SGST', accessor: (r) => r.total_sgst ?? 0 }, { header: 'CGST', accessor: (r) => r.total_cgst ?? 0 }, { header: 'Tax', accessor: (r) => r.total_tax ?? 0 }], rows: sortedTaxOnItems })}>Export</Button></div>
         <div className="max-h-[calc(100dvh-14rem)] overflow-auto">
           <table className="w-full min-w-[620px]">
             <thead className="sticky top-0 z-10 bg-input border-b border-on-light">
               <tr>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">Item</th>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">Qty</th>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">SGST</th>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">CGST</th>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">Tax</th>
+                <SortHeader label="Item" sortKey="fname" sortConfig={sortConfigTax} onSort={requestSortTax} />
+                <SortHeader label="Qty" sortKey="total_quantity" sortConfig={sortConfigTax} onSort={requestSortTax} />
+                <SortHeader label="SGST" sortKey="total_sgst" sortConfig={sortConfigTax} onSort={requestSortTax} />
+                <SortHeader label="CGST" sortKey="total_cgst" sortConfig={sortConfigTax} onSort={requestSortTax} />
+                <SortHeader label="Tax" sortKey="total_tax" sortConfig={sortConfigTax} onSort={requestSortTax} />
               </tr>
             </thead>
             <tbody>
-              {taxOnItems.length === 0 ? (
+              {sortedTaxOnItems.length === 0 ? (
                 <tr><td colSpan={5} className="px-3 py-6 text-sm text-muted">No tax data.</td></tr>
-              ) : taxOnItems.map((row, i) => (
+              ) : sortedTaxOnItems.map((row, i) => (
                 <tr key={`${row.fname ?? 'x'}-${i}`} className="border-b border-subtle">
                   <td className="px-3 py-2 text-sm font-medium text-on-light">{row.fname ?? '-'}</td>
                   <td className="px-3 py-2 text-sm text-on-light">{row.total_quantity ?? 0}</td>

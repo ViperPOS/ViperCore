@@ -3,6 +3,21 @@ import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/dialogs';
 import { RefreshCw } from 'lucide-react';
 import ipcService from '@/services/ipcService';
+import { useSortableData } from '@/hooks/useSortableData';
+
+function SortHeader({ label, sortKey, sortConfig, onSort }) {
+  const active = sortConfig.key === sortKey;
+  const arrow = active ? (sortConfig.direction === 'asc' ? ' [A]' : ' [D]') : '';
+  return (
+    <th
+      className="px-3 py-2 text-left text-xs uppercase tracking-[0.15em] cursor-pointer select-none hover:opacity-80"
+      style={{ color: 'var(--text-muted)' }}
+      onClick={() => onSort(sortKey)}
+    >
+      {label}{arrow}
+    </th>
+  );
+}
 
 function ItemForm({ categories, initial, onPreviewChange, onSubmit, onCancel, busy, label }) {
   const [fname, setFname] = useState(initial?.fname ?? '');
@@ -140,13 +155,21 @@ function ItemModal({ title, categories, initial, onSubmit, onClose, busy, label 
         className="surface-card w-full max-w-5xl rounded-3xl p-6 shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-4 mb-5">
+          <div className="flex items-start justify-between gap-4 mb-5">
           <div>
             <p className="text-xs uppercase tracking-[0.25em] text-muted">Menu Item Editor</p>
             <h3 className="text-2xl font-black text-on-light mt-1">{title}</h3>
             <p className="text-sm text-muted mt-1">Edit the item details, tax values, and type from one focused dialog.</p>
           </div>
-          <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>Close</Button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-lg leading-none p-1 rounded hover:bg-hover transition-colors"
+            style={{ color: '#dc2626' }}
+            disabled={busy}
+          >
+            &#x2715;
+          </button>
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.4fr)_320px] gap-4">
@@ -206,7 +229,7 @@ function ItemModal({ title, categories, initial, onSubmit, onClose, busy, label 
   );
 }
 
-function MenuRow({ item, onEdit, onDelete, busy }) {
+function MenuRow({ item, onEdit, onDelete, onToggleActive, busy }) {
   return (
     <tr className="border-b" style={{ borderColor: 'var(--border-subtle)' }}>
       <td className="px-3 py-2 text-sm" style={{ color: 'var(--text-muted)' }}>{item.fid ?? '-'}</td>
@@ -217,14 +240,16 @@ function MenuRow({ item, onEdit, onDelete, busy }) {
       <td className="px-3 py-2 text-sm font-medium" style={{ color: 'var(--text-on-light)' }}>Rs. {Number(item.cost ?? 0).toFixed(2)}</td>
       <td className="px-3 py-2">
         <span
-          className="inline-flex w-20 justify-center text-xs px-2 py-1 rounded-full"
+          className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-full"
           style={{
-            backgroundColor: item.veg ? 'var(--color-a)' : 'var(--color-b)',
-            color: 'var(--text-on-dark)',
-            border: '1.5px solid',
-            borderColor: item.veg ? 'var(--color-a)' : 'var(--color-b)',
+            backgroundColor: item.veg ? 'rgba(34, 197, 94, 0.16)' : 'rgba(239, 68, 68, 0.16)',
+            color: item.veg ? '#16a34a' : '#dc2626',
           }}
         >
+          <span
+            className="inline-block w-2.5 h-2.5 rounded-full"
+            style={{ backgroundColor: item.veg ? '#16a34a' : '#dc2626' }}
+          />
           {item.veg ? 'VEG' : 'NON-VEG'}
         </span>
       </td>
@@ -232,9 +257,28 @@ function MenuRow({ item, onEdit, onDelete, busy }) {
         SGST: {Number(item.sgst ?? 0).toFixed(2)} | CGST: {Number(item.cgst ?? 0).toFixed(2)}
       </td>
       <td className="px-3 py-2">
+        <span
+          className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full"
+          style={{
+            backgroundColor: Number(item.active) ? 'rgba(34, 197, 94, 0.16)' : 'rgba(107, 114, 128, 0.16)',
+            color: Number(item.active) ? '#16a34a' : 'var(--text-muted)',
+          }}
+        >
+          <span
+            className="inline-block w-2 h-2 rounded-full"
+            style={{ backgroundColor: Number(item.active) ? '#16a34a' : 'var(--text-muted)' }}
+          />
+          {Number(item.active) ? 'Active' : 'Inactive'}
+        </span>
+      </td>
+      <td className="px-3 py-2">
         <div className="flex gap-1">
           <Button size="sm" variant="secondary" onClick={() => onEdit(item)} disabled={busy}>Edit</Button>
-          <Button size="sm" variant="ghost" onClick={() => onDelete(item)} disabled={busy}>Delete</Button>
+          <Button size="sm" variant="ghost" onClick={() => onToggleActive(item)} disabled={busy}>
+            {Number(item.active) ? 'Deactivate' : 'Activate'}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => onDelete(item)} disabled={busy}
+            style={{ color: 'var(--status-error)' }}>Delete</Button>
         </div>
       </td>
     </tr>
@@ -247,6 +291,9 @@ export default function MenuPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [vegFilter, setVegFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
   const [error, setError] = useState('');
   const [showAdd, setShowAdd] = useState(false);
   const [editItem, setEditItem] = useState(null);
@@ -299,13 +346,23 @@ export default function MenuPage() {
 
   const filteredItems = useMemo(() => {
     const text = query.trim().toLowerCase();
-    if (!text) return items;
-    return items.filter((item) =>
-      String(item?.fid ?? '').includes(text) ||
-      (item?.fname ?? '').toLowerCase().includes(text) ||
-      (item?.category_name ?? '').toLowerCase().includes(text)
-    );
-  }, [items, query]);
+    return items.filter((item) => {
+      if (text) {
+        const matchesText = String(item?.fid ?? '').includes(text) ||
+          (item?.fname ?? '').toLowerCase().includes(text) ||
+          (item?.category_name ?? '').toLowerCase().includes(text);
+        if (!matchesText) return false;
+      }
+      if (categoryFilter && String(item.category) !== categoryFilter) return false;
+      if (vegFilter === 'veg' && !item.veg) return false;
+      if (vegFilter === 'nonveg' && item.veg) return false;
+      if (statusFilter === 'active' && !Number(item.active)) return false;
+      if (statusFilter === 'inactive' && Number(item.active)) return false;
+      return true;
+    });
+  }, [items, query, categoryFilter, vegFilter, statusFilter]);
+
+  const { sorted: sortedItems, sortConfig, requestSort } = useSortableData(filteredItems);
 
   const addItem = async (formData) => {
     setBusy(true);
@@ -352,6 +409,37 @@ export default function MenuPage() {
     finally { if (mountedRef.current) setBusy(false); }
   };
 
+  const toggleItemActive = async (item) => {
+    setBusy(true);
+    setError('');
+    try {
+      const newActive = Number(item.active) ? 0 : 1;
+      const result = await ipcService.invoke('update-food-item', {
+        fid: item.fid,
+        fname: item.fname,
+        category: item.category,
+        cost: item.cost,
+        sgst: item.sgst,
+        cgst: item.cgst,
+        veg: item.veg,
+        active: newActive,
+      });
+      if (!mountedRef.current) return;
+      if (result?.success) {
+        await loadMenuItems();
+      } else {
+        setError(result?.error || 'Failed to update item status.');
+      }
+    } catch (err) { if (mountedRef.current) setError('Could not update item status.'); }
+    finally { if (mountedRef.current) setBusy(false); }
+  };
+
+  const selectStyle = {
+    backgroundColor: 'var(--bg-card)',
+    border: '1.5px solid var(--border-on-light)',
+    color: 'var(--text-on-light)',
+  };
+
   const cardStyle = { backgroundColor: 'var(--bg-card)', border: '1.5px solid var(--border-on-light)', color: 'var(--text-on-light)' };
 
   return (
@@ -363,13 +451,6 @@ export default function MenuPage() {
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{items.length} items</p>
           </div>
           <div className="flex items-center gap-2">
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search by id, name, category"
-              style={cardStyle}
-              className="h-10 w-64 max-w-full rounded-lg px-3 text-sm outline-none"
-            />
             <Button onClick={() => { setShowAdd(true); setEditItem(null); }} disabled={busy}>Add Item</Button>
             <Button
               variant="secondary"
@@ -381,6 +462,41 @@ export default function MenuPage() {
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
               <span className="sr-only">Refresh</span>
             </Button>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-end gap-3 mt-3">
+          <div>
+            <label className="block text-xs uppercase mb-1" style={{ color: 'var(--text-muted)' }}>Search</label>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search by id, name, category"
+              style={cardStyle}
+              className="h-10 w-56 rounded-lg px-3 text-sm outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs uppercase mb-1" style={{ color: 'var(--text-muted)' }}>Category</label>
+            <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} style={selectStyle} className="h-10 rounded-lg px-3 text-sm outline-none">
+              <option value="">All Categories</option>
+              {categories.map((c) => <option key={c.catid} value={c.catid}>{c.catname}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs uppercase mb-1" style={{ color: 'var(--text-muted)' }}>Type</label>
+            <select value={vegFilter} onChange={(e) => setVegFilter(e.target.value)} style={selectStyle} className="h-10 rounded-lg px-3 text-sm outline-none">
+              <option value="">All Types</option>
+              <option value="veg">Veg</option>
+              <option value="nonveg">Non-Veg</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs uppercase mb-1" style={{ color: 'var(--text-muted)' }}>Status</label>
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={selectStyle} className="h-10 rounded-lg px-3 text-sm outline-none">
+              <option value="">All Status</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
           </div>
         </div>
       </section>
@@ -420,20 +536,24 @@ export default function MenuPage() {
           <table className="w-full min-w-[860px]">
             <thead className="sticky top-0 z-10" style={{ backgroundColor: 'var(--bg-card)', borderBottom: '1.5px solid var(--border-on-light)' }}>
               <tr>
-                {['ID','Item','Price','Type','Tax','Actions'].map((h) => (
-                  <th key={h} className="px-3 py-2 text-left text-xs uppercase tracking-[0.15em]" style={{ color: 'var(--text-muted)' }}>{h}</th>
-                ))}
+                <SortHeader label="ID" sortKey="fid" sortConfig={sortConfig} onSort={requestSort} />
+                <SortHeader label="Item" sortKey="fname" sortConfig={sortConfig} onSort={requestSort} />
+                <SortHeader label="Price" sortKey="cost" sortConfig={sortConfig} onSort={requestSort} />
+                <SortHeader label="Type" sortKey="veg" sortConfig={sortConfig} onSort={requestSort} />
+                <th className="px-3 py-2 text-left text-xs uppercase tracking-[0.15em]" style={{ color: 'var(--text-muted)' }}>Tax</th>
+                <SortHeader label="Status" sortKey="active" sortConfig={sortConfig} onSort={requestSort} />
+                <th className="px-3 py-2 text-left text-xs uppercase tracking-[0.15em]" style={{ color: 'var(--text-muted)' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={6} className="px-3 py-8 text-sm text-center" style={{ color: 'var(--text-muted)' }}>Loading menu items...</td></tr>
+                <tr><td colSpan={7} className="px-3 py-8 text-sm text-center" style={{ color: 'var(--text-muted)' }}>Loading menu items...</td></tr>
               ) : null}
-              {!loading && filteredItems.length === 0 ? (
-                <tr><td colSpan={6} className="px-3 py-8 text-sm text-center" style={{ color: 'var(--text-muted)' }}>No items found.</td></tr>
+              {!loading && sortedItems.length === 0 ? (
+                <tr><td colSpan={7} className="px-3 py-8 text-sm text-center" style={{ color: 'var(--text-muted)' }}>No items found.</td></tr>
               ) : null}
-              {!loading && filteredItems.map((item) => (
-                <MenuRow key={item.fid ?? item._idx} item={item} onEdit={(it) => { setEditItem(it); setShowAdd(false); }} onDelete={deleteItem} busy={busy} />
+              {!loading && sortedItems.map((item) => (
+                <MenuRow key={item.fid ?? item._idx} item={item} onEdit={(it) => { setEditItem(it); setShowAdd(false); }} onDelete={deleteItem} onToggleActive={toggleItemActive} busy={busy} />
               ))}
             </tbody>
           </table>

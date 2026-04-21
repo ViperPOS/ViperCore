@@ -1041,6 +1041,23 @@ function setupIPC() {
 
             await dbRunAsync('COMMIT');
 
+            // Save business info from setup data
+            try {
+                const businessInfo = {
+                    businessName: tenantName,
+                    address: tenantLocation,
+                    ownerName: contactName,
+                    phone: contactPhone,
+                    email: contactEmail || '',
+                    tagline: '',
+                    hours: '',
+                };
+                const businessInfoPath = getFilePath('businessInfo.json');
+                await fs.promises.writeFile(businessInfoPath, JSON.stringify(businessInfo, null, 4), 'utf-8');
+            } catch (bizErr) {
+                console.error('Failed to save initial business info:', bizErr);
+            }
+
             const sessionUser = toSessionUser(createdUser);
             store.set('sessionUser', sessionUser);
             return { success: true, user: sessionUser };
@@ -3373,14 +3390,14 @@ ipcMain.handle("delete-menu-item", async (event, fid) => {
     }
 });
 //Edit Menu ITems
-ipcMain.handle("update-food-item", async (event, { fid, fname, category, cost, sgst, cgst, veg }) => {
+ipcMain.handle("update-food-item", async (event, { fid, fname, category, cost, sgst, cgst, veg, active }) => {
     try {
         const query = `
             UPDATE FoodItem 
-            SET fname = ?, cost = ?, category = ?, sgst = ?, cgst = ?, veg = ?
+            SET fname = ?, cost = ?, category = ?, sgst = ?, cgst = ?, veg = ?, active = ?
             WHERE fid = ?
         `;
-        await db.run(query, [fname, cost, category, sgst, cgst, veg, fid]);
+        await db.run(query, [fname, cost, category, sgst, cgst, veg, active ?? 1, fid]);
         return { success: true };
     } catch (error) {
         console.error("Error updating food item:", error);

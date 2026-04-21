@@ -36,28 +36,32 @@ export default function BackupRestorePage({ mode }) {
   };
 
   return (
-    <section className="surface-card rounded-2xl p-5 space-y-4 max-w-lg">
-      <div>
-        <h2 className="text-xl font-black text-on-light">{isBackup ? 'Backup Database' : 'Restore Database'}</h2>
-        <p className="text-sm text-muted mt-1">
-          {isBackup
-            ? 'Create a backup copy of your database to a local file.'
-            : 'Restore your database from a previously created backup file.'}
-        </p>
-      </div>
-
-      {!isBackup && (
-        <div className="rounded-lg border border-on-light p-3 text-sm" style={{ background: 'var(--bg-hover)', color: 'var(--text-on-light)' }}>
-          Restoring will overwrite your current database. Make sure you have a backup before proceeding.
+    <div className="flex items-center justify-center" style={{ minHeight: 'calc(100dvh - 12rem)' }}>
+      <section className="surface-card rounded-2xl p-6 space-y-5 max-w-lg w-full">
+        <div className="text-center">
+          <h2 className="text-xl font-black text-on-light">{isBackup ? 'Backup Database' : 'Restore Database'}</h2>
+          <p className="text-sm text-muted mt-1">
+            {isBackup
+              ? 'Create a backup copy of your database to a local file.'
+              : 'Restore your database from a previously created backup file.'}
+          </p>
         </div>
-      )}
 
-      {error ? <p className="text-sm text-error">{error}</p> : null}
-      {message ? <p className="text-sm text-success">{message}</p> : null}
+        {!isBackup && (
+          <div className="rounded-lg border border-on-light p-3 text-sm" style={{ background: 'var(--bg-hover)', color: 'var(--text-on-light)' }}>
+            Restoring will overwrite your current database. Make sure you have a backup before proceeding.
+          </div>
+        )}
 
-      <Button onClick={runAction} disabled={loading} variant={isBackup ? 'default' : 'secondary'}>
-        {loading ? (isBackup ? 'Backing up...' : 'Restoring...') : (isBackup ? 'Create Backup' : 'Restore from Backup')}
-      </Button>
-    </section>
+        {error ? <p className="text-sm text-error text-center">{error}</p> : null}
+        {message ? <p className="text-sm text-success text-center">{message}</p> : null}
+
+        <div className="flex justify-center">
+          <Button onClick={runAction} disabled={loading} variant={isBackup ? 'default' : 'secondary'}>
+            {loading ? (isBackup ? 'Backing up...' : 'Restoring...') : (isBackup ? 'Create Backup' : 'Restore from Backup')}
+          </Button>
+        </div>
+      </section>
+    </div>
   );
 }

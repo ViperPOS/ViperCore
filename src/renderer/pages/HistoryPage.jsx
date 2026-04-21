@@ -23,6 +23,10 @@ export default function HistoryPage() {
       setError('Start date and end date are required.');
       return;
     }
+    if (startDate > endDate) {
+      setError('End date cannot be earlier than start date.');
+      return;
+    }
 
     setLoading(true);
     setError('');
