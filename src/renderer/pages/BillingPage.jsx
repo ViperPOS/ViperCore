@@ -453,8 +453,9 @@ export default function BillingPage({ user }) {
         return;
       }
 
+      const wasUpdate = Boolean(tableForm.tableId);
       setTableForm({ tableId: null, tableNumber: '', tableName: '' });
-      setMessage(tableForm.tableId ? 'Table updated.' : 'Table created.');
+      setMessage(wasUpdate ? 'Table updated.' : 'Table created.');
       await loadBillingTables();
     } catch (err) {
       console.error('Failed to save table:', err);

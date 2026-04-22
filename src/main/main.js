@@ -1,8 +1,10 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog } = require("electron");
 const path = require("path");
+const url = require("url");
 const crypto = require('crypto');
 const sqlite3 = require('sqlite3').verbose();
 const fs = require('fs');
+const Store = require('electron-store');
 const printService = require('./services/printService');
 const UpdateService = require('./services/updateService');
 const {
@@ -50,7 +52,7 @@ function getMainWindowUrl() {
         : path.join(basePath, 'dist', 'index.html');
 
     if (fs.existsSync(distIndexPath)) {
-        return `file://${distIndexPath}`;
+        return url.pathToFileURL(distIndexPath).href;
     }
 
     console.error('dist/index.html not found. Run "npm run build" first.');
@@ -158,21 +160,31 @@ async function initializeDatabaseConnection() {
 
 
 async function initStore() {
-    let Store;
     try {
-    Store = require('electron-store'); // CommonJS
-    } catch (err) {
-    console.error("Failed to require electron-store:", err);
-    }
-    store = new Store({
-        defaults: {
-            appInstanceId: crypto.randomUUID(),
-            printerConfig: {
-                vendorId: '0x0525',
-                productId: '0xA700'
+        store = new Store({
+            defaults: {
+                appInstanceId: crypto.randomUUID(),
+                printerConfig: {
+                    vendorId: '0x0525',
+                    productId: '0xA700'
+                }
             }
-        }
-    });
+        });
+    } catch (err) {
+        console.error('electron-store corrupted, resetting:', err.message);
+        const StoreClass = require('electron-store');
+        const storePath = new StoreClass({ cwd: app.getPath('userData') }).path;
+        try { fs.unlinkSync(storePath); } catch (_) {}
+        store = new StoreClass({
+            defaults: {
+                appInstanceId: crypto.randomUUID(),
+                printerConfig: {
+                    vendorId: '0x0525',
+                    productId: '0xA700'
+                }
+            }
+        });
+    }
     return store;
 }
 
@@ -429,12 +441,16 @@ async function ensureBillingTableSchema() {
     const heldCols = await dbAllAsync('PRAGMA table_info(HeldOrders)');
     const hasHeldTableId = heldCols.some((col) => col.name === 'table_id');
     const hasHeldTableLabel = heldCols.some((col) => col.name === 'table_label');
+    const hasHeldDate = heldCols.some((col) => col.name === 'date');
 
     if (!hasHeldTableId) {
         await dbRunAsync('ALTER TABLE HeldOrders ADD COLUMN table_id INTEGER');
     }
     if (!hasHeldTableLabel) {
         await dbRunAsync('ALTER TABLE HeldOrders ADD COLUMN table_label TEXT');
+    }
+    if (!hasHeldDate) {
+        await dbRunAsync("ALTER TABLE HeldOrders ADD COLUMN date TEXT NOT NULL DEFAULT (datetime('now'))");
     }
 
     const deletedCols = await dbAllAsync('PRAGMA table_info(DeletedOrders)');
@@ -581,15 +597,29 @@ async function callRemoteAuthFunction(remoteConfig, slug, payload) {
         throw new Error('Remote auth configuration is missing.');
     }
 
-    const response = await fetch(`${remoteConfig.functionsBaseUrl}/${slug}`, {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${remoteConfig.anonKey}`,
-            apikey: remoteConfig.anonKey,
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload || {}),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    let response;
+    try {
+        response = await fetch(`${remoteConfig.functionsBaseUrl}/${slug}`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${remoteConfig.anonKey}`,
+                apikey: remoteConfig.anonKey,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload || {}),
+            signal: controller.signal,
+        });
+    } catch (fetchErr) {
+        if (fetchErr.name === 'AbortError') {
+            throw new Error(`Remote function ${slug} timed out after 15 seconds.`);
+        }
+        throw fetchErr;
+    } finally {
+        clearTimeout(timeout);
+    }
 
     let data = null;
     try {
@@ -724,7 +754,7 @@ function createMainWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, '..', 'preload.js'),
-      devTools: true,
+      devTools: !app.isPackaged,
     },
   });
 
@@ -744,9 +774,9 @@ function createMainWindow() {
     });
   });
 
-  // Enable developer tools with F12 key
+  // Enable developer tools with F12 key (dev only)
   mainWindow.webContents.on('before-input-event', (event, input) => {
-    if (input.key === 'F12' && input.type === 'keyDown') {
+    if (!app.isPackaged && input.key === 'F12' && input.type === 'keyDown') {
       mainWindow.webContents.toggleDevTools();
     }
   });
@@ -763,10 +793,27 @@ function createMainWindow() {
     }, 100);
   });
 
-  // Handle renderer crashes (machine-specific issue)
+  // Handle renderer crashes with crash-count limit to prevent infinite reload loop
+  let rendererCrashCount = 0;
+  let crashResetTimer = null;
+
   mainWindow.webContents.on('render-process-gone', (event, details) => {
-    console.error('❌ Renderer process crashed:', details);
-    // Restart the window
+    rendererCrashCount += 1;
+    console.error(`❌ Renderer process crashed (${rendererCrashCount}/3):`, details);
+
+    // Reset crash counter after 30 seconds of stability
+    if (crashResetTimer) clearTimeout(crashResetTimer);
+    crashResetTimer = setTimeout(() => { rendererCrashCount = 0; }, 30000);
+
+    if (rendererCrashCount >= 3) {
+      console.error('❌ Too many renderer crashes, showing error dialog');
+      dialog.showErrorBox(
+        'Application Error',
+        'The application has crashed multiple times. Please restart the application. If the problem persists, contact support.'
+      );
+      return;
+    }
+
     setTimeout(() => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.reload();
@@ -1468,7 +1515,7 @@ app.on('second-instance', () => {
 
 app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-        createWindow();
+        createMainWindow();
     }
 });
 
@@ -1886,195 +1933,6 @@ ipcMain.on('get-employee-analysis', (event, { startDate, endDate }) => {
     });
 });
 
-ipcMain.on('get-food-pairings', (event) => {
-    const query = `
-        SELECT 
-            a.fname as item1, 
-            b.fname as item2,
-            COUNT(*) as times_ordered_together
-        FROM OrderDetails od1
-        JOIN OrderDetails od2 ON od1.orderid = od2.orderid AND od1.foodid < od2.foodid
-        JOIN FoodItem a ON od1.foodid = a.fid
-        JOIN FoodItem b ON od2.foodid = b.fid
-        GROUP BY od1.foodid, od2.foodid
-        ORDER BY times_ordered_together DESC
-        LIMIT 50
-    `;
-
-    db.all(query, [], (err, rows) => {
-        if (err) {
-            console.error('Error fetching food pairings:', err);
-            event.reply('food-pairings-response', { 
-                success: false, 
-                error: err.message 
-            });
-        } else {
-            event.reply('food-pairings-response', {
-                success: true,
-                pairings: rows
-            });
-        }
-    });
-});
-
-ipcMain.on('get-menu-profitability', (event, { startDate, endDate }) => {
-    const query = `
-        WITH OrderTotals AS (
-            SELECT 
-                o.billno,
-                SUM(od.quantity) as total_quantity,
-                o.price as order_total
-            FROM Orders o
-            JOIN OrderDetails od ON o.billno = od.orderid
-            WHERE o.date BETWEEN ? AND ?
-            GROUP BY o.billno
-        )
-        SELECT 
-            f.fname,
-            c.catname,
-            SUM(od.quantity) as total_units_sold,
-            SUM(od.quantity * f.cost) as total_cost,
-            SUM(od.quantity * (ot.order_total / ot.total_quantity)) as total_revenue,
-            SUM(od.quantity * ((ot.order_total / ot.total_quantity) - f.cost)) as total_profit,
-            ROUND(
-                SUM(od.quantity * ((ot.order_total / ot.total_quantity) - f.cost)) * 100.0 / 
-                SUM(od.quantity * (ot.order_total / ot.total_quantity)), 
-                2
-            ) as profit_margin
-        FROM Orders o
-        JOIN OrderDetails od ON o.billno = od.orderid
-        JOIN FoodItem f ON od.foodid = f.fid
-        JOIN Category c ON f.category = c.catid
-        JOIN OrderTotals ot ON o.billno = ot.billno
-        WHERE o.date BETWEEN ? AND ?
-        GROUP BY od.foodid
-        ORDER BY total_profit DESC
-    `;
-
-    db.all(query, [startDate, endDate, startDate, endDate], (err, rows) => {
-        if (err) {
-            console.error('Error fetching menu profitability data:', err);
-            event.reply('menu-profitability-response', { 
-                success: false, 
-                error: err.message 
-            });
-        } else {
-            event.reply('menu-profitability-response', {
-                success: true,
-                items: rows
-            });
-        }
-    });
-});
-
-ipcMain.on('get-seven-day-sales', (event) => {
-    // Calculate date range (past 7 days including today)
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(endDate.getDate() - 6); // 7 days total
-    
-    // Format dates as YYYY-MM-DD
-    const formatDate = (date) => getLocalDateString(date);
-    const startDateStr = formatDate(startDate);
-    const endDateStr = formatDate(endDate);
-    
-    // First get all dates in the range to ensure we have entries for all days
-    const dateQuery = `
-        WITH RECURSIVE dates(date) AS (
-            VALUES(?)
-            UNION ALL
-            SELECT date(date, '+1 day')
-            FROM dates
-            WHERE date < ?
-        )
-        SELECT date FROM dates;
-    `;
-    
-    db.all(dateQuery, [startDateStr, endDateStr], (err, dateRows) => {
-        if (err) {
-            console.error('Error getting date range:', err);
-            event.reply('seven-day-sales-response', { 
-                success: false, 
-                error: err.message 
-            });
-            return;
-        }
-        
-        // Now get sales counts and revenue for each date
-        const salesQuery = `
-            SELECT 
-                date,
-                COUNT(billno) as salesCount,
-                COALESCE(SUM(price), 0) as totalRevenue
-            FROM Orders
-            WHERE date BETWEEN ? AND ?
-            GROUP BY date
-            ORDER BY date;
-        `;
-        
-        // Get units sold separately since it requires joining with OrderDetails
-        const unitsQuery = `
-            SELECT 
-                o.date,
-                COALESCE(SUM(od.quantity), 0) as unitsSold
-            FROM Orders o
-            LEFT JOIN OrderDetails od ON o.billno = od.orderid
-            WHERE o.date BETWEEN ? AND ?
-            GROUP BY o.date
-            ORDER BY o.date;
-        `;
-        
-        // Execute both queries in parallel
-        Promise.all([
-            new Promise((resolve, reject) => {
-                db.all(salesQuery, [startDateStr, endDateStr], (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
-                });
-            }),
-            new Promise((resolve, reject) => {
-                db.all(unitsQuery, [startDateStr, endDateStr], (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
-                });
-            })
-        ]).then(([salesRows, unitsRows]) => {
-            // Create maps for each metric
-            const salesMap = {};
-            const revenueMap = {};
-            const unitsMap = {};
-            
-            // Process sales and revenue data
-            salesRows.forEach(row => {
-                salesMap[row.date] = row.salesCount;
-                revenueMap[row.date] = row.totalRevenue;
-            });
-            
-            // Process units sold data
-            unitsRows.forEach(row => {
-                unitsMap[row.date] = row.unitsSold;
-            });
-            
-            // Prepare response with all dates in order
-            const response = {
-                success: true,
-                dates: dateRows.map(row => row.date),
-                salesCounts: dateRows.map(row => salesMap[row.date] || 0),
-                totalRevenues: dateRows.map(row => revenueMap[row.date] || 0),
-                unitsSold: dateRows.map(row => unitsMap[row.date] || 0)
-            };
-            
-            event.reply('seven-day-sales-response', response);
-        }).catch(err => {
-            console.error('Error getting sales data:', err);
-            event.reply('seven-day-sales-response', { 
-                success: false, 
-                error: err.message 
-            });
-        });
-    });
-});
-
 // In your main.js file, add this to the IPC handlers section:
 // In your main.js file, add/update this IPC handler:
 ipcMain.on('get-best-in-category', (event, { startDate, endDate }) => {
@@ -2443,6 +2301,7 @@ ipcMain.on('get-held-orders', (event) => {
             HeldOrders.sgst, 
             HeldOrders.cgst, 
             HeldOrders.tax, 
+            HeldOrders.date,
             GROUP_CONCAT(FoodItem.fname || ' (x' || HeldOrderDetails.quantity || ')', ', ') AS food_items
         FROM HeldOrders
         JOIN User ON HeldOrders.cashier = User.userid
@@ -2485,40 +2344,31 @@ ipcMain.on('get-held-order-details', (event, heldId) => {
     `;
 
     db.get(query, [heldId], (err, orderDetails) => {
-        if (err) {
-            console.error("Error fetching held order details:", err);
+        if (err || !orderDetails) {
+            if (err) console.error("Error fetching held order details:", err);
             event.reply('held-order-details-data', [], heldId);
             return;
         }
 
-        // Parse JSON string from SQLite JSON functions
         let foodDetails = orderDetails.food_details ? JSON.parse(orderDetails.food_details) : [];
 
-        event.reply('held-order-details-data', foodDetails, heldId); // Pass `heldId` back
+        event.reply('held-order-details-data', foodDetails, heldId);
     });
 });
 
 
 // Delete a held order
-ipcMain.on('delete-held-order', (event, heldId) => {
-    const deleteOrderDetailsQuery = `DELETE FROM HeldOrderDetails WHERE heldid = ?`;
-    const deleteOrderQuery = `DELETE FROM HeldOrders WHERE heldid = ?`;
-
-    db.run(deleteOrderDetailsQuery, [heldId], function (err) {
-        if (err) {
-            console.error("Error deleting held order details:", err);
-            return;
-        }
-
-        db.run(deleteOrderQuery, [heldId], function (err) {
-            if (err) {
-                console.error("Error deleting held order:", err);
-                return;
-            }
-
-            event.reply('held-order-deleted', heldId);
-        });
-    });
+ipcMain.on('delete-held-order', async (event, heldId) => {
+    try {
+        await dbRunAsync('BEGIN TRANSACTION');
+        await dbRunAsync('DELETE FROM HeldOrderDetails WHERE heldid = ?', [heldId]);
+        await dbRunAsync('DELETE FROM HeldOrders WHERE heldid = ?', [heldId]);
+        await dbRunAsync('COMMIT');
+        event.reply('held-order-deleted', heldId);
+    } catch (err) {
+        try { await dbRunAsync('ROLLBACK'); } catch (_) {}
+        console.error("Error deleting held order:", err);
+    }
 });
 
 
@@ -2532,100 +2382,92 @@ ipcMain.on("save-bill", async (event, orderData) => {
 
         // Fetch tax details and calculate actual total
         for (const { foodId, quantity } of orderItems) {
-            const row = await new Promise((resolve, reject) => {
-                db.get(
-                    `SELECT cost, sgst, cgst, tax FROM FoodItem WHERE fid = ?`,
-                    [foodId],
-                    (err, row) => {
-                        if (err) reject(err);
-                        else resolve(row);
-                    }
-                );
-            });
+            const row = await dbGetAsync(
+                `SELECT cost, sgst, cgst, tax FROM FoodItem WHERE fid = ?`,
+                [foodId]
+            );
 
             if (!row) {
                 throw new Error(`Food item with ID ${foodId} not found.`);
             }
 
-            let itemTotal = row.cost * quantity; // Get correct item total from DB
-            calculatedTotalAmount += itemTotal; // Accumulate correct total
+            let itemTotal = row.cost * quantity;
+            calculatedTotalAmount += itemTotal;
 
             totalSGST += (itemTotal * row.sgst) / 100;
             totalCGST += (itemTotal * row.cgst) / 100;
             totalTax += (itemTotal * row.tax) / 100;
         }
 
-        // If totalAmount is 0, use calculatedTotalAmount instead
         const finalTotalAmount = totalAmount > 0 ? totalAmount : calculatedTotalAmount;
         const normalizedTableId = Number.isInteger(Number(tableId)) ? Number(tableId) : null;
         const normalizedTableLabel = String(tableLabel || '').trim() || null;
 
-        // Get the latest KOT number for the current date
-        const kotRow = await new Promise((resolve, reject) => {
-            db.get(
-                `SELECT kot FROM Orders WHERE date = ? ORDER BY kot DESC LIMIT 1`,
-                [date],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                }
-            );
-        });
+        // Begin transaction to make KOT + order insert atomic
+        await dbRunAsync('BEGIN IMMEDIATE TRANSACTION');
 
-        let kot = kotRow ? kotRow.kot + 1 : 1; // Increment KOT or reset if new day
+        // Get the latest KOT number for the current date (serialized by transaction)
+        const kotRow = await dbGetAsync(
+            `SELECT kot FROM Orders WHERE date = ? ORDER BY kot DESC LIMIT 1`,
+            [date]
+        );
 
-        // Insert the new order with correct total
-        const orderId = await new Promise((resolve, reject) => {
-            db.run(
-                `INSERT INTO Orders (kot, price, sgst, cgst, tax, cashier, date, table_id, table_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [
-                    kot,
-                    finalTotalAmount.toFixed(2),
-                    totalSGST.toFixed(2),
-                    totalCGST.toFixed(2),
-                    totalTax.toFixed(2),
-                    cashier,
-                    date,
-                    normalizedTableId,
-                    normalizedTableLabel,
-                ],
-                function (err) {
-                    if (err) reject(err);
-                    else resolve(this.lastID);
-                }
-            );
-        });
+        let kot = kotRow ? kotRow.kot + 1 : 1;
+
+        // Insert the new order
+        const result = await dbRunAsync(
+            `INSERT INTO Orders (kot, price, sgst, cgst, tax, cashier, date, table_id, table_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                kot,
+                finalTotalAmount.toFixed(2),
+                totalSGST.toFixed(2),
+                totalCGST.toFixed(2),
+                totalTax.toFixed(2),
+                cashier,
+                date,
+                normalizedTableId,
+                normalizedTableLabel,
+            ]
+        );
+        const orderId = result.lastID;
 
         // Insert items into OrderDetails
         const stmt = db.prepare(
             `INSERT INTO OrderDetails (orderid, foodid, quantity) VALUES (?, ?, ?)`
         );
-        orderItems.forEach(({ foodId, quantity }) => stmt.run(orderId, foodId, quantity));
-        stmt.finalize();
+        for (const { foodId, quantity } of orderItems) {
+            await new Promise((resolve, reject) => {
+                stmt.run(orderId, foodId, quantity, (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+        }
+        await new Promise((resolve, reject) => {
+            stmt.finalize((err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
 
         // Check if a discount was applied and insert into DiscountedOrders
         if (calculatedTotalAmount > finalTotalAmount) {
             const discountAmount = (calculatedTotalAmount - finalTotalAmount).toFixed(2);
             const discountPercentage = ((discountAmount / calculatedTotalAmount) * 100).toFixed(2);
 
-            await new Promise((resolve, reject) => {
-                db.run(
-                    `INSERT INTO DiscountedOrders (billno, Initial_price, discount_percentage, discount_amount) VALUES (?, ?, ?, ?)`,
-                    [orderId, calculatedTotalAmount.toFixed(2), discountPercentage, discountAmount],
-                    function (err) {
-                        if (err) reject(err);
-                        else resolve();
-                    }
-                );
-            });
+            await dbRunAsync(
+                `INSERT INTO DiscountedOrders (billno, Initial_price, discount_percentage, discount_amount) VALUES (?, ?, ?, ?)`,
+                [orderId, calculatedTotalAmount.toFixed(2), discountPercentage, discountAmount]
+            );
         }
 
-        console.log(`Order ${orderId} saved successfully with KOT ${kot}.`);
+        await dbRunAsync('COMMIT');
 
-        // Send success response and KOT number to renderer
-        event.sender.send("bill-saved", { kot,orderId });
+        console.log(`Order ${orderId} saved successfully with KOT ${kot}.`);
+        event.sender.send("bill-saved", { kot, orderId });
 
     } catch (error) {
+        try { await dbRunAsync('ROLLBACK'); } catch (_) {}
         console.error("Error processing order:", error.message);
         event.sender.send("bill-error", { error: error.message });
     }
@@ -2640,66 +2482,54 @@ ipcMain.on("hold-bill", async (event, orderData) => {
         const normalizedTableId = Number.isInteger(Number(tableId)) ? Number(tableId) : null;
         const normalizedTableLabel = String(tableLabel || '').trim() || null;
 
-        // Fetch food item data and calculate totals
         for (const { foodId, quantity } of orderItems) {
-            const row = await new Promise((resolve, reject) => {
-                db.get(`SELECT cost, sgst, cgst, tax FROM FoodItem WHERE fid = ?`, [foodId], (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                });
-            });
-
-            if (!row) {
-                throw new Error(`Food item with ID ${foodId} not found.`);
-            }
-
-            let itemTotal = row.cost * quantity;
+            const row = await dbGetAsync(`SELECT cost, sgst, cgst, tax FROM FoodItem WHERE fid = ?`, [foodId]);
+            if (!row) throw new Error(`Food item with ID ${foodId} not found.`);
+            const itemTotal = row.cost * quantity;
             totalPrice += itemTotal;
             totalSGST += (itemTotal * row.sgst) / 100;
             totalCGST += (itemTotal * row.cgst) / 100;
             totalTax += (itemTotal * row.tax) / 100;
         }
 
-        // Insert the new order
-        const orderId = await new Promise((resolve, reject) => {
-            db.run(
-                `INSERT INTO HeldOrders (price, sgst, cgst, tax, cashier, table_id, table_label) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                [
-                    totalPrice.toFixed(2),
-                    totalSGST.toFixed(2),
-                    totalCGST.toFixed(2),
-                    totalTax.toFixed(2),
-                    cashier,
-                    normalizedTableId,
-                    normalizedTableLabel,
-                ],
-                function (err) {
-                    if (err) reject(err);
-                    else resolve(this.lastID);
-                }
-            );
-        });
+        await dbRunAsync('BEGIN TRANSACTION');
 
-        // Insert items into HeldOrderDetails
+        const result = await dbRunAsync(
+            `INSERT INTO HeldOrders (price, sgst, cgst, tax, cashier, table_id, table_label, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                totalPrice.toFixed(2),
+                totalSGST.toFixed(2),
+                totalCGST.toFixed(2),
+                totalTax.toFixed(2),
+                cashier,
+                normalizedTableId,
+                normalizedTableLabel,
+                date,
+            ]
+        );
+        const orderId = result.lastID;
+
         const stmt = db.prepare(`INSERT INTO HeldOrderDetails (heldid, foodid, quantity) VALUES (?, ?, ?)`);
-
         for (const { foodId, quantity } of orderItems) {
             await new Promise((resolve, reject) => {
                 stmt.run(orderId, foodId, quantity, (err) => {
-                    if (err) reject(err);
-                    else resolve();
+                    if (err) reject(err); else resolve();
                 });
             });
         }
+        await new Promise((resolve, reject) => {
+            stmt.finalize((err) => {
+                if (err) reject(err); else resolve();
+            });
+        });
 
-        stmt.finalize();
+        await dbRunAsync('COMMIT');
 
         console.log(`Order Held Successfully`);
-
-        // Send success response
         event.sender.send("bill-held");
 
     } catch (error) {
+        try { await dbRunAsync('ROLLBACK'); } catch (_) {}
         console.error("Error processing order:", error.message);
         event.sender.send("bill-error", { error: error.message });
     }
@@ -2826,7 +2656,7 @@ ipcMain.on("get-order-history", (event, data) => {
     db.all(query, params, (err, rows) => {
         if (err) {
             console.error("Error fetching order history:", err);
-            event.reply("fetchOrderHistoryResponse", { success: false, orders: [] });
+            event.reply("order-history-response", { success: false, orders: [], message: err.message });
             return;
         }
         //console.log("Order history fetched:", rows); 
@@ -2834,38 +2664,98 @@ ipcMain.on("get-order-history", (event, data) => {
     });
 });
 
+ipcMain.on("update-order", async (event, { billno, orderItems }) => {
+    try {
+        if (!billno || !Array.isArray(orderItems) || orderItems.length === 0) {
+            event.reply("update-order-response", { success: false, message: "Invalid order data." });
+            return;
+        }
+
+        const existingOrder = await dbGetAsync("SELECT * FROM Orders WHERE billno = ?", [billno]);
+        if (!existingOrder) {
+            event.reply("update-order-response", { success: false, message: "Order not found." });
+            return;
+        }
+
+        await dbRunAsync('BEGIN TRANSACTION');
+
+        // Calculate new totals from FoodItem costs
+        let totalPrice = 0, totalSGST = 0, totalCGST = 0, totalTax = 0;
+        for (const { foodId, quantity } of orderItems) {
+            const item = await dbGetAsync("SELECT cost, sgst, cgst, tax FROM FoodItem WHERE fid = ?", [foodId]);
+            if (!item) {
+                await dbRunAsync('ROLLBACK');
+                event.reply("update-order-response", { success: false, message: `Food item ${foodId} not found.` });
+                return;
+            }
+            const itemTotal = item.cost * quantity;
+            totalPrice += itemTotal;
+            totalSGST += (itemTotal * item.sgst) / 100;
+            totalCGST += (itemTotal * item.cgst) / 100;
+            totalTax += (itemTotal * item.tax) / 100;
+        }
+
+        // Update OrderDetails: delete all then re-insert
+        await dbRunAsync("DELETE FROM OrderDetails WHERE orderid = ?", [billno]);
+        const stmt = db.prepare("INSERT INTO OrderDetails (orderid, foodid, quantity) VALUES (?, ?, ?)");
+        for (const { foodId, quantity } of orderItems) {
+            await new Promise((resolve, reject) => {
+                stmt.run(billno, foodId, quantity, (err) => {
+                    if (err) reject(err); else resolve();
+                });
+            });
+        }
+        await new Promise((resolve, reject) => {
+            stmt.finalize((err) => {
+                if (err) reject(err); else resolve();
+            });
+        });
+
+        // Update order totals
+        await dbRunAsync(
+            "UPDATE Orders SET price = ?, sgst = ?, cgst = ?, tax = ? WHERE billno = ?",
+            [totalPrice.toFixed(2), totalSGST.toFixed(2), totalCGST.toFixed(2), totalTax.toFixed(2), billno]
+        );
+
+        // Update or remove discount
+        const discount = await dbGetAsync("SELECT * FROM DiscountedOrders WHERE billno = ?", [billno]);
+        if (discount) {
+            if (totalPrice >= existingOrder.price) {
+                // No more discount needed
+                await dbRunAsync("DELETE FROM DiscountedOrders WHERE billno = ?", [billno]);
+            } else {
+                const discountAmount = (existingOrder.price - totalPrice).toFixed(2);
+                const discountPercentage = ((discountAmount / existingOrder.price) * 100).toFixed(2);
+                await dbRunAsync(
+                    "UPDATE DiscountedOrders SET Initial_price = ?, discount_percentage = ?, discount_amount = ? WHERE billno = ?",
+                    [existingOrder.price, discountPercentage, discountAmount, billno]
+                );
+            }
+        }
+
+        await dbRunAsync('COMMIT');
+        event.reply("update-order-response", { success: true, message: `Order #${billno} updated.` });
+
+    } catch (error) {
+        try { await dbRunAsync('ROLLBACK'); } catch (_) {}
+        console.error("Error updating order:", error);
+        event.reply("update-order-response", { success: false, message: "Failed to update order." });
+    }
+});
+
 ipcMain.on("confirm-delete-order", async (event, { billNo, reason, source }) => {
     try {
-        // Convert db.get and db.all into Promises
-        const getAsync = (query, params) => {
-            return new Promise((resolve, reject) => {
-                db.get(query, params, (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                });
-            });
-        };
-
-        const allAsync = (query, params) => {
-            return new Promise((resolve, reject) => {
-                db.all(query, params, (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
-                });
-            });
-        };
-
-        // Fetch order and order details using Promises
-        const order = await getAsync("SELECT * FROM Orders WHERE billno = ?", [billNo]);
-        const orderDetails = await allAsync("SELECT * FROM OrderDetails WHERE orderid = ?", [billNo]);
+        const order = await dbGetAsync("SELECT * FROM Orders WHERE billno = ?", [billNo]);
+        const orderDetails = await dbAllAsync("SELECT * FROM OrderDetails WHERE orderid = ?", [billNo]);
 
         if (!order) {
             event.reply("delete-order-response", { success: false, message: "Order not found!" });
             return;
         }
 
-        // Insert into DeletedOrders
-        await db.run(
+        await dbRunAsync('BEGIN TRANSACTION');
+
+        await dbRunAsync(
             "INSERT INTO DeletedOrders (billno, date, cashier, kot, price, sgst, cgst, tax, reason, table_id, table_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 order.billno,
@@ -2882,25 +2772,27 @@ ipcMain.on("confirm-delete-order", async (event, { billNo, reason, source }) => 
             ]
         );
 
-        // Insert into DeletedOrderDetails
         for (const detail of orderDetails) {
-            await db.run(
+            await dbRunAsync(
                 "INSERT INTO DeletedOrderDetails (orderid, foodid, quantity) VALUES (?, ?, ?)",
                 [detail.orderid, detail.foodid, detail.quantity]
             );
         }
 
-        // Delete from Orders and OrderDetails
-        await db.run("DELETE FROM Orders WHERE billno = ?", [billNo]);
-        await db.run("DELETE FROM OrderDetails WHERE orderid = ?", [billNo]);
+        await dbRunAsync("DELETE FROM Orders WHERE billno = ?", [billNo]);
+        await dbRunAsync("DELETE FROM OrderDetails WHERE orderid = ?", [billNo]);
+
+        await dbRunAsync('COMMIT');
 
         event.reply("delete-order-response", { success: true, message: "Order deleted successfully!" });
 
-        // ✅ Notify the renderer process about the deletion
-        mainWindow.webContents.send("order-deleted", { source });
-        mainWindow.webContents.send("refresh-order-history");
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send("order-deleted", { source });
+            mainWindow.webContents.send("refresh-order-history");
+        }
 
     } catch (error) {
+        try { await dbRunAsync('ROLLBACK'); } catch (_) {}
         console.error("Error deleting order:", error);
         event.reply("delete-order-response", { success: false, message: "Failed to delete order." });
     }
@@ -2942,7 +2834,7 @@ ipcMain.on("get-deleted-orders", (event, { startDate, endDate }) => {
     db.all(query, [startDate, endDate], (err, rows) => {
         if (err) {
             console.error("Error fetching deleted orders:", err);
-            event.reply("fetchDeletedOrdersResponse", { success: false, orders: [] });
+            event.reply("deleted-orders-response", { success: false, orders: [], message: err.message });
             return;
         }
         event.reply("deleted-orders-response", { success: true, orders: rows });
@@ -3116,108 +3008,6 @@ ipcMain.on("get-order-details", (event, billno) => {
     });
 });
 
-// Day-Wise Data Handler
-ipcMain.on('get-day-wise-data', (event, { startDate, endDate }) => {
-    const query = `
-        SELECT 
-            date,
-            COUNT(DISTINCT billno) as order_count,
-            COALESCE(SUM(
-                (SELECT SUM(quantity) 
-                 FROM OrderDetails 
-                 WHERE orderid = Orders.billno)
-            ), 0) as total_units,
-            COALESCE(SUM(price), 0) as total_revenue
-        FROM Orders
-        WHERE date BETWEEN ? AND ?
-        GROUP BY date
-        ORDER BY date DESC
-    `;
-
-    db.all(query, [startDate, endDate], (err, rows) => {
-        if (err) {
-            console.error('Error fetching day-wise data:', err);
-            event.reply('day-wise-data-response', { 
-                success: false, 
-                error: err.message 
-            });
-        } else {
-            event.reply('day-wise-data-response', {
-                success: true,
-                days: rows
-            });
-        }
-    });
-});
-
-// Month-Wise Data Handler
-ipcMain.on('get-month-wise-data', (event, { year }) => {
-    const query = `
-        SELECT 
-            CAST(strftime('%m', date) AS INTEGER) as month,
-            COUNT(DISTINCT billno) as order_count,
-            COALESCE(SUM(
-                (SELECT SUM(quantity) 
-                 FROM OrderDetails 
-                 WHERE orderid = Orders.billno)
-            ), 0) as total_units,
-            COALESCE(SUM(price), 0) as total_revenue
-        FROM Orders
-        WHERE strftime('%Y', date) = ?
-        GROUP BY month
-        ORDER BY month ASC
-    `;
-
-    db.all(query, [year.toString()], (err, rows) => {
-        if (err) {
-            console.error('Error fetching month-wise data:', err);
-            event.reply('month-wise-data-response', { 
-                success: false, 
-                error: err.message 
-            });
-        } else {
-            event.reply('month-wise-data-response', {
-                success: true,
-                months: rows
-            });
-        }
-    });
-});
-
-// Year-Wise Data Handler
-ipcMain.on('get-year-wise-data', (event) => {
-    const query = `
-        SELECT 
-            strftime('%Y', date) as year,
-            COUNT(DISTINCT billno) as order_count,
-            COALESCE(SUM(
-                (SELECT SUM(quantity) 
-                 FROM OrderDetails 
-                 WHERE orderid = Orders.billno)
-            ), 0) as total_units,
-            COALESCE(SUM(price), 0) as total_revenue
-        FROM Orders
-        GROUP BY year
-        ORDER BY year DESC
-    `;
-
-    db.all(query, [], (err, rows) => {
-        if (err) {
-            console.error('Error fetching year-wise data:', err);
-            event.reply('year-wise-data-response', { 
-                success: false, 
-                error: err.message 
-            });
-        } else {
-            event.reply('year-wise-data-response', {
-                success: true,
-                years: rows
-            });
-        }
-    });
-});
-const Store = require('electron-store');
-
 //----------------------------------------------SETTINGS TAB ENDS HERE--------------------------------------------
 
 // Store for category order
@@ -3390,14 +3180,14 @@ ipcMain.handle("delete-menu-item", async (event, fid) => {
     }
 });
 //Edit Menu ITems
-ipcMain.handle("update-food-item", async (event, { fid, fname, category, cost, sgst, cgst, veg, active }) => {
+ipcMain.handle("update-food-item", async (event, { fid, fname, category, cost, sgst, cgst, tax, veg, active }) => {
     try {
         const query = `
             UPDATE FoodItem 
-            SET fname = ?, cost = ?, category = ?, sgst = ?, cgst = ?, veg = ?, active = ?
+            SET fname = ?, cost = ?, category = ?, sgst = ?, cgst = ?, tax = ?, veg = ?, active = ?
             WHERE fid = ?
         `;
-        await db.run(query, [fname, cost, category, sgst, cgst, veg, active ?? 1, fid]);
+        await dbRunAsync(query, [fname, cost, category, sgst, cgst, tax ?? 0, veg, active ?? 1, fid]);
         return { success: true };
     } catch (error) {
         console.error("Error updating food item:", error);
@@ -3569,7 +3359,7 @@ ipcMain.handle('bulk-update-food-items', async (event, updates) => {
             updates.forEach(update => {
                 const query = `
                     UPDATE FoodItem 
-                    SET fname = ?, category = ?, cost = ?, sgst = ?, cgst = ?, veg = ?, active = ?
+                    SET fname = ?, category = ?, cost = ?, sgst = ?, cgst = ?, tax = ?, veg = ?, active = ?
                     WHERE fid = ?
                 `;
                 
@@ -3579,6 +3369,7 @@ ipcMain.handle('bulk-update-food-items', async (event, updates) => {
                     update.cost,
                     update.sgst,
                     update.cgst,
+                    update.tax ?? 0,
                     update.veg,
                     update.active,
                     update.fid
@@ -3755,11 +3546,9 @@ ipcMain.on('refresh-menu', (event) => {
 // Event listener to handle exit request
 // Event listener to handle exit request
 ipcMain.on("exit-app", (event) => {
-    // Close the database connection before quitting
       closeDatabase();
-      // Clear Session Storage
-      store.clear();
-       app.quit(); // Close the app
+      store.delete("sessionUser");
+       app.quit();
   });
 
 // --------------------------------- BUSINESS INFO SECTION -----------------------------
@@ -4086,11 +3875,11 @@ function initializeSchema() {
             )`);
 
             db.run(`INSERT OR IGNORE INTO ActivationKey (key_code, status) VALUES
-                ('LCP7F-3K9QW-2M8DX-5R4TN', 'available'),
-                ('LCP4J-8V2NP-6Q5XT-9H3RA', 'available'),
-                ('LCP9M-1C7LK-4Z8YD-2F6WS', 'available'),
-                ('LCP5X-6R3HJ-9B1QT-7N4PD', 'available'),
-                ('LCP8A-2W5VF-3N9CM-6K7ZX', 'available')`);
+                ('LCP7F-3K9QW-2M8DX-5R4TN-00001', 'available'),
+                ('LCP4J-8V2NP-6Q5XT-9H3RA-00002', 'available'),
+                ('LCP9M-1C7LK-4Z8YD-2F6WS-00003', 'available'),
+                ('LCP5X-6R3HJ-9B1QT-7N4PD-00004', 'available'),
+                ('LCP8A-2W5VF-3N9CM-6K7ZX-00005', 'available')`);
   
             db.run(`CREATE TABLE IF NOT EXISTS FoodItem (
         fid INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -4143,6 +3932,7 @@ function initializeSchema() {
         cgst NUMERIC NOT NULL,
         tax NUMERIC NOT NULL,
         cashier INTEGER NOT NULL,
+        date TEXT NOT NULL DEFAULT (datetime('now')),
         FOREIGN KEY (cashier) REFERENCES User(userid)
       )`);
   
@@ -4180,11 +3970,20 @@ function initializeSchema() {
         FOREIGN KEY (foodid) REFERENCES FoodItem(fid)
       )`);
   
+            // One-time cleanup of legacy tables from old schema
             db.run(`DROP TABLE IF EXISTS OnlineOrderItems`);
             db.run(`DROP TABLE IF EXISTS OnlineOrders`);
-                        db.run(`DROP TABLE IF EXISTS Inventory`);
+            db.run(`DROP TABLE IF EXISTS Inventory`);
+            db.run(`DROP TABLE IF EXISTS Miscellaneous`);
 
-                        db.run(`DROP TABLE IF EXISTS Miscellaneous`);
+                        db.run(`CREATE INDEX IF NOT EXISTS idx_orders_date ON Orders(date)`);
+                        db.run(`CREATE INDEX IF NOT EXISTS idx_orders_cashier ON Orders(cashier)`);
+                        db.run(`CREATE INDEX IF NOT EXISTS idx_orders_table_id ON Orders(table_id)`);
+                        db.run(`CREATE INDEX IF NOT EXISTS idx_orderdetails_orderid ON OrderDetails(orderid)`);
+                        db.run(`CREATE INDEX IF NOT EXISTS idx_orderdetails_foodid ON OrderDetails(foodid)`);
+                        db.run(`CREATE INDEX IF NOT EXISTS idx_fooditem_category ON FoodItem(category)`);
+                        db.run(`CREATE INDEX IF NOT EXISTS idx_fooditem_active_is_on ON FoodItem(active, is_on)`);
+                        db.run(`CREATE INDEX IF NOT EXISTS idx_deletedorders_date ON DeletedOrders(date)`);
 
                         const schemaChecksPromise = (async () => {
                             await ensureUserTableSchema();

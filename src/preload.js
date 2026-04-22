@@ -56,6 +56,13 @@ const allowedInvokeChannels = new Set([
   'create-billing-table',
   'update-billing-table',
   'delete-billing-table',
+  'add-new-user',
+  'toggle-menu-item',
+  'toggle-menu-item-active',
+  'bulk-update-food-items',
+  'get-food-items-with-order',
+  'save-item-order',
+  'reset-item-order',
 ]);
 
 const allowedSendChannels = new Set([
@@ -90,6 +97,7 @@ const allowedSendChannels = new Set([
   'get-held-orders',
   'get-held-order-details',
   'delete-held-order',
+  'update-order',
 ]);
 
 const allowedReceiveChannels = new Set([
@@ -130,6 +138,7 @@ const allowedReceiveChannels = new Set([
   'held-orders-data',
   'held-order-details-data',
   'held-order-deleted',
+  'update-order-response',
 ]);
 
 function isAllowedChannel(channel, allowedSet, mode) {

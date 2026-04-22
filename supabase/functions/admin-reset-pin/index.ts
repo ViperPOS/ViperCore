@@ -80,15 +80,23 @@ Deno.serve(async (req) => {
     }
 
     const pinHash = await hashSecret(newPin);
-    const { error: updateErr } = await supabase
+    const { data: updated, error: updateErr } = await supabase
       .from("tenant_users")
       .update({ pin_hash: pinHash })
       .eq("tenant_id", tenant.id)
-      .eq("username", targetUsername);
+      .eq("username", targetUsername)
+      .select("id");
 
     if (updateErr) {
       return new Response(JSON.stringify({ success: false, message: updateErr.message || "Failed to reset PIN" }), {
         status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (!updated || updated.length === 0) {
+      return new Response(JSON.stringify({ success: false, message: "Target user not found" }), {
+        status: 404,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

@@ -85,15 +85,29 @@ class UpdateService extends EventEmitter {
       appVersion: String(appIdentity?.appVersion || app.getVersion()).trim(),
     };
 
-    const response = await fetch(`${normalizeBaseUrl(remoteConfig.functionsBaseUrl)}/check-update`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${remoteConfig.anonKey}`,
-        apikey: remoteConfig.anonKey,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    let response;
+    try {
+      response = await fetch(`${normalizeBaseUrl(remoteConfig.functionsBaseUrl)}/check-update`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${remoteConfig.anonKey}`,
+          apikey: remoteConfig.anonKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+    } catch (fetchErr) {
+      if (fetchErr.name === 'AbortError') {
+        throw new Error('Update check timed out after 15 seconds.');
+      }
+      throw fetchErr;
+    } finally {
+      clearTimeout(timeout);
+    }
 
     let data = null;
     try {

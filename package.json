@@ -26,6 +26,10 @@
     "productName": "alspos",
     "artifactName": "alspos Setup.exe",
     "files": [
+      "main.js",
+      "backup.js",
+      "restore.js",
+      "src/preload.js",
       "dist/**/*",
       "src/main/**/*"
     ],
@@ -33,6 +37,10 @@
       {
         "from": "src/resources",
         "to": "resources"
+      },
+      {
+        "from": "assets",
+        "to": "assets"
       }
     ],
     "win": {
@@ -76,7 +84,6 @@
     "escpos": "3.0.0-alpha.6",
     "escpos-usb": "3.0.0-alpha.4",
     "lucide-react": "^0.292.0",
-    "open": "^10.1.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-hook-form": "^7.51.3",

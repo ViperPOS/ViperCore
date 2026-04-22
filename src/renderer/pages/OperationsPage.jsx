@@ -224,6 +224,27 @@ export default function OperationsPage({ initialTab }) {
     }
   };
 
+  const updateOrder = async (billno, orderItems) => {
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const result = await ipcService.requestReply('update-order', 'update-order-response', { billno, orderItems });
+      if (!result?.success) {
+        setError(result?.message || 'Failed to update order.');
+        return;
+      }
+      setMessage(`Order #${billno} updated successfully.`);
+      setEditBillno(null);
+      fetchTodayOrders();
+    } catch (err) {
+      console.error('Failed to update order:', err);
+      setError('Failed to update order.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   useEffect(() => {
     setActiveTab(initialTab || 'todaysOrders');
   }, [initialTab]);
