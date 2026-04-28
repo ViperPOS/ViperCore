@@ -497,6 +497,10 @@ function UpdateTab() {
     downloadedPath: null,
     lastCheckedAt: null,
     progress: 0,
+    speed: 0,
+    remainingSeconds: null,
+    chunkIndex: null,
+    chunkTotal: null,
   });
   const [busy, setBusy] = useState(false);
   const [subscription, setSubscription] = useState(null);
@@ -518,12 +522,42 @@ function UpdateTab() {
     return `${day}-${month}-${year} ${time}`;
   };
 
+  const formatBytes = (bytes) => {
+    if (!bytes || bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return `${(bytes / Math.pow(1024, i)).toFixed(i > 1 ? 1 : 0)} ${units[i]}`;
+  };
+
+  const formatSpeed = (bytesPerSec) => {
+    if (!bytesPerSec || bytesPerSec <= 0) return '--';
+    return `${formatBytes(bytesPerSec)}/s`;
+  };
+
+  const formatETA = (seconds) => {
+    if (seconds === null || seconds === undefined || seconds <= 0) return '--';
+    if (seconds < 60) return `${seconds}s`;
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  };
+
   const getRemainingLabel = () => {
     if (!subscription?.subscription) return 'Not added';
     if (!subscription.subscription.hasExpiry) return 'No expiry set';
     if (typeof subscription.subscription.remainingDays !== 'number') return 'N/A';
     if (subscription.subscription.remainingDays <= 0) return 'Expired';
     return `${subscription.subscription.remainingDays} day(s)`;
+  };
+
+  const getStatusConfig = () => {
+    if (state.checking) return { label: 'Checking for updates...', color: 'var(--status-info, #3b82f6)', pulse: true };
+    if (state.downloading) return { label: 'Downloading...', color: 'var(--status-info, #3b82f6)', pulse: true };
+    if (state.status === 'downloaded') return { label: 'Ready to install', color: 'var(--status-success, #22c55e)', pulse: false };
+    if (state.status === 'installing') return { label: 'Launching installer...', color: 'var(--status-success, #22c55e)', pulse: true };
+    if (state.updateAvailable) return { label: 'Update available', color: 'var(--status-warning, #f59e0b)', pulse: false };
+    if (state.error) return { label: 'Error', color: 'var(--status-error, #ef4444)', pulse: false };
+    return { label: 'Up to date', color: 'var(--status-success, #22c55e)', pulse: false };
   };
 
   useEffect(() => {
@@ -534,7 +568,7 @@ function UpdateTab() {
       try {
         const snapshot = await updateService.getStatus();
         if (mounted && snapshot) {
-          setState(snapshot);
+          setState((prev) => ({ ...prev, ...snapshot }));
         }
 
         if (isOnline) {
@@ -581,7 +615,7 @@ function UpdateTab() {
     try {
       const snapshot = await updateService.checkForUpdates();
       if (snapshot) {
-        setState(snapshot);
+        setState((prev) => ({ ...prev, ...snapshot }));
       }
     } catch (error) {
       setState((prev) => ({ ...prev, error: error?.message || 'Failed to check for updates.' }));
@@ -599,7 +633,7 @@ function UpdateTab() {
     try {
       const snapshot = await updateService.downloadUpdate();
       if (snapshot) {
-        setState(snapshot);
+        setState((prev) => ({ ...prev, ...snapshot }));
       }
     } catch (error) {
       setState((prev) => ({ ...prev, error: error?.message || 'Failed to download update.' }));
@@ -626,116 +660,174 @@ function UpdateTab() {
     : (!isOnline && !subscription?.subscribed)
       ? 'Offline'
       : (subscription?.subscription?.status || (subscription?.subscribed ? 'active' : 'not added'));
+  const statusConfig = getStatusConfig();
+  const isDownloading = state.downloading || state.status === 'downloading';
+  const isChunked = Number(state.chunkTotal) > 1;
 
   return (
-    <section className="surface-card rounded-2xl p-5 space-y-4 max-w-2xl">
-      <div>
-        <h2 className="text-xl font-black text-on-light">Updates</h2>
-        <p className="text-sm text-muted mt-1">Check for signed Supabase-hosted releases and install them manually.</p>
+    <section className="space-y-4 max-w-2xl">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-black text-on-light">Software Update</h2>
+          <p className="text-sm text-muted mt-1">Check for updates and install the latest version.</p>
+        </div>
+        <div className="flex items-center gap-2 rounded-full px-3 py-1.5" style={{ backgroundColor: `${statusConfig.color}15` }}>
+          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: statusConfig.color, animation: statusConfig.pulse ? 'pulse 2s infinite' : 'none' }} />
+          <span className="text-xs font-semibold" style={{ color: statusConfig.color }}>{statusConfig.label}</span>
+        </div>
       </div>
+
+      <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }`}</style>
 
       {!isOnline ? <OfflineBanner /> : null}
 
-      <div className="rounded-xl border border-on-light p-4 space-y-3">
-        <div className="flex items-center justify-between gap-3">
+      <div className="surface-card rounded-2xl p-4 space-y-3">
+        <div className="flex items-center justify-between">
           <p className="text-sm font-semibold text-on-light">Subscription</p>
           <span className={`text-xs font-semibold px-2 py-1 rounded ${isSubscribed ? 'bg-success/15 text-success' : 'bg-black/10 text-on-light'}`}>
             {subscriptionStatusText}
           </span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-          <div className="rounded-lg border border-on-light p-3">
-            <p className="text-xs uppercase text-muted">Started</p>
-            <p className="mt-1 text-on-light">{formatDateTime(subscription?.subscription?.startsAt)}</p>
+        {hasSubscriptionRecord ? (
+          <div className="grid grid-cols-3 gap-2 text-xs">
+            <div className="rounded-lg border border-on-light p-2">
+              <p className="uppercase text-muted">Started</p>
+              <p className="mt-0.5 text-on-light truncate">{formatDateTime(subscription?.subscription?.startsAt)}</p>
+            </div>
+            <div className="rounded-lg border border-on-light p-2">
+              <p className="uppercase text-muted">Ends</p>
+              <p className="mt-0.5 text-on-light truncate">{formatDateTime(subscription?.subscription?.expiresAt)}</p>
+            </div>
+            <div className="rounded-lg border border-on-light p-2">
+              <p className="uppercase text-muted">Remaining</p>
+              <p className="mt-0.5 text-on-light">{getRemainingLabel()}</p>
+            </div>
           </div>
-          <div className="rounded-lg border border-on-light p-3">
-            <p className="text-xs uppercase text-muted">Ends</p>
-            <p className="mt-1 text-on-light">{formatDateTime(subscription?.subscription?.expiresAt)}</p>
-          </div>
-          <div className="rounded-lg border border-on-light p-3">
-            <p className="text-xs uppercase text-muted">Remaining</p>
-            <p className="mt-1 text-on-light">{getRemainingLabel()}</p>
-          </div>
-        </div>
-
-        {!hasSubscriptionRecord ? (
-          <p className="text-sm text-muted">
-            No subscription was added during setup.
-          </p>
         ) : null}
 
         {!isSubscribed ? (
-          <div className="space-y-2">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => setSubscribeInfo(CONTACT_MESSAGE)}
-            >
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="secondary" onClick={() => setSubscribeInfo(CONTACT_MESSAGE)} className="text-xs h-8">
               Subscribe
             </Button>
-            {subscribeInfo ? <p className="text-sm text-muted">{subscribeInfo}</p> : null}
+            {subscribeInfo ? <p className="text-xs text-muted">{subscribeInfo}</p> : null}
           </div>
         ) : null}
-
-        {subscription?.message ? <p className="text-xs text-muted">{subscription.message}</p> : null}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-        <div className="rounded-xl border border-on-light p-3">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="surface-card rounded-2xl p-4">
           <p className="text-xs uppercase text-muted">Current Version</p>
-          <p className="mt-1 font-semibold text-on-light">{state.currentVersion || 'Unknown'}</p>
+          <p className="text-lg font-black text-on-light mt-0.5">{state.currentVersion || 'Unknown'}</p>
         </div>
-        <div className="rounded-xl border border-on-light p-3">
+        <div className="surface-card rounded-2xl p-4">
           <p className="text-xs uppercase text-muted">Latest Version</p>
-          <p className="mt-1 font-semibold text-on-light">{state.latestVersion || 'Not checked yet'}</p>
-        </div>
-        <div className="rounded-xl border border-on-light p-3">
-          <p className="text-xs uppercase text-muted">Status</p>
-          <p className="mt-1 font-semibold text-on-light">{state.status || 'idle'}</p>
-        </div>
-        <div className="rounded-xl border border-on-light p-3">
-          <p className="text-xs uppercase text-muted">Last Checked</p>
-          <p className="mt-1 font-semibold text-on-light">
-            {state.lastCheckedAt ? formatDateTime(state.lastCheckedAt) : 'Never'}
-          </p>
+          <p className="text-lg font-black text-on-light mt-0.5">{state.latestVersion || 'Not checked'}</p>
         </div>
       </div>
 
-      {state.updateAvailable ? (
-        <div className="rounded-xl border border-success/30 bg-success/5 p-4 space-y-2">
-          <p className="font-semibold text-success">Update available: {state.latestVersion}</p>
-          {releaseNotes ? <p className="text-sm text-on-light whitespace-pre-wrap">{releaseNotes}</p> : null}
-          {state.downloadedPath ? (
-            <p className="text-xs text-muted break-all">Downloaded file: {state.downloadedPath}</p>
-          ) : null}
-          {state.downloading ? (
-            <div className="space-y-2">
-              <div className="h-2 w-full rounded-full bg-black/10 overflow-hidden">
-                <div className="h-full rounded-full bg-success transition-all" style={{ width: `${Math.max(0, Math.min(100, state.progress || 0))}%` }} />
-              </div>
-              <p className="text-xs text-muted">Downloading... {state.progress || 0}%</p>
+      {isDownloading && (
+        <div className="surface-card rounded-2xl p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-on-light">
+              {isChunked ? `Downloading chunk ${(state.chunkIndex ?? 0) + 1} of ${state.chunkTotal}` : 'Downloading update'}
+            </p>
+            <p className="text-2xl font-black text-on-light">{state.progress ?? 0}%</p>
+          </div>
+
+          <div className="h-3 w-full rounded-full bg-black/10 overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-300 ease-out"
+              style={{
+                width: `${Math.max(0, Math.min(100, state.progress || 0))}%`,
+                background: 'linear-gradient(90deg, var(--status-info, #3b82f6), var(--status-success, #22c55e))',
+              }}
+            />
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="rounded-lg border border-on-light p-2">
+              <p className="text-xs text-muted">Downloaded</p>
+              <p className="text-sm font-semibold text-on-light">{formatBytes(state.transferredBytes)}</p>
             </div>
-          ) : null}
-        </div>
-      ) : (
-        <div className="rounded-xl border border-on-light p-4">
-          <p className="text-sm text-muted">No pending update has been confirmed yet.</p>
+            <div className="rounded-lg border border-on-light p-2">
+              <p className="text-xs text-muted">Speed</p>
+              <p className="text-sm font-semibold text-on-light">{formatSpeed(state.speed)}</p>
+            </div>
+            <div className="rounded-lg border border-on-light p-2">
+              <p className="text-xs text-muted">Remaining</p>
+              <p className="text-sm font-semibold text-on-light">{formatETA(state.remainingSeconds)}</p>
+            </div>
+          </div>
+
+          {state.totalBytes > 0 && (
+            <p className="text-xs text-muted text-center">{formatBytes(state.transferredBytes)} of {formatBytes(state.totalBytes)}</p>
+          )}
         </div>
       )}
 
-      {state.message ? <p className="text-sm text-success">{state.message}</p> : null}
+      {state.status === 'downloaded' && (
+        <div className="surface-card rounded-2xl p-5 space-y-2" style={{ borderLeft: '4px solid var(--status-success, #22c55e)' }}>
+          <p className="text-sm font-semibold text-success">Update downloaded and verified</p>
+          <p className="text-xs text-muted">SHA256 hash verified. Ready to install.</p>
+        </div>
+      )}
+
+      {state.updateAvailable && !isDownloading && state.status !== 'downloaded' && (
+        <div className="surface-card rounded-2xl p-5 space-y-3" style={{ borderLeft: '4px solid var(--status-warning, #f59e0b)' }}>
+          <p className="text-sm font-semibold" style={{ color: 'var(--status-warning, #f59e0b)' }}>
+            Version {state.latestVersion} is available
+          </p>
+          {state.updateInfo?.fileSize ? (
+            <p className="text-xs text-muted">Size: {formatBytes(state.updateInfo.fileSize)}</p>
+          ) : null}
+          {releaseNotes ? (
+            <div className="rounded-lg border border-on-light p-3 max-h-32 overflow-y-auto">
+              <p className="text-xs uppercase text-muted mb-1">Release Notes</p>
+              <p className="text-sm text-on-light whitespace-pre-wrap">{releaseNotes}</p>
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      {!state.updateAvailable && !isDownloading && state.status !== 'downloaded' && !state.checking && !state.error && (
+        <div className="surface-card rounded-2xl p-5">
+          <p className="text-sm text-muted">
+            {state.lastCheckedAt ? 'You are running the latest version.' : 'Click "Check for Updates" to see if a new version is available.'}
+          </p>
+        </div>
+      )}
+
+      {state.message && !isDownloading ? <p className="text-sm text-success">{state.message}</p> : null}
       {state.error ? <p className="text-sm text-error">{state.error}</p> : null}
 
+      {state.lastCheckedAt && (
+        <p className="text-xs text-muted">Last checked: {formatDateTime(state.lastCheckedAt)}</p>
+      )}
+
       <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="secondary" onClick={checkForUpdates} disabled={busy || state.checking || state.downloading || !isOnline}>
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={checkForUpdates}
+          disabled={busy || state.checking || isDownloading || !isOnline}
+        >
           {state.checking ? 'Checking...' : 'Check for Updates'}
         </Button>
-        <Button type="button" onClick={downloadUpdate} disabled={busy || !state.updateAvailable || state.downloading || !isOnline}>
-          {state.downloading ? 'Downloading...' : 'Download Update'}
+        <Button
+          type="button"
+          onClick={downloadUpdate}
+          disabled={busy || !state.updateAvailable || isDownloading || state.status === 'downloaded' || !isOnline}
+        >
+          {isDownloading ? `Downloading ${state.progress ?? 0}%` : 'Download Update'}
         </Button>
-        <Button type="button" variant="secondary" onClick={installUpdate} disabled={busy || !state.canInstall}>
-          Install Update
+        <Button
+          type="button"
+          onClick={installUpdate}
+          disabled={busy || !state.canInstall || state.status !== 'downloaded'}
+        >
+          Install & Restart
         </Button>
       </div>
     </section>

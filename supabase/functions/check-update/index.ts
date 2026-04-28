@@ -135,7 +135,7 @@ Deno.serve(async (req) => {
 
     const { data: release, error: releaseErr } = await supabase
       .from("app_releases")
-      .select("id, channel, platform, arch, version, storage_bucket, storage_path, file_name, sha256, release_notes, min_supported_version, mandatory, rollout_percent, active, published_at")
+      .select("id, channel, platform, arch, version, storage_bucket, storage_path, file_name, sha256, release_notes, min_supported_version, mandatory, rollout_percent, active, published_at, chunk_count, file_size")
       .eq("channel", channel)
       .eq("platform", platform)
       .eq("arch", arch)
@@ -224,27 +224,63 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { data: signedUrlData, error: signedUrlErr } = await supabase.storage
-      .from(release.storage_bucket)
-      .createSignedUrl(release.storage_path, 300);
+    const chunkCount = Number(release.chunk_count || 1);
+    const fileSize = release.file_size != null ? Number(release.file_size) : null;
 
-    if (signedUrlErr || !signedUrlData?.signedUrl) {
-      await supabase.from("update_audit_log").insert({
-        tenant_id: tenant.id,
-        app_instance_id: appInstanceId,
-        current_version: currentVersion,
-        latest_version: release.version,
-        channel,
-        platform,
-        arch,
-        result: "error",
-        reason: signedUrlErr?.message || "Failed to create signed download URL",
-      });
+    let downloadUrl: string | null = null;
+    let chunkUrls: string[] | null = null;
 
-      return new Response(JSON.stringify({ success: false, message: "Failed to create download URL" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    if (chunkCount > 1) {
+      const urls: string[] = [];
+      for (let i = 0; i < chunkCount; i++) {
+        const chunkPath = `${release.storage_path}.part${i}`;
+        const { data: chunkSigned, error: chunkErr } = await supabase.storage
+          .from(release.storage_bucket)
+          .createSignedUrl(chunkPath, 300);
+        if (chunkErr || !chunkSigned?.signedUrl) {
+          await supabase.from("update_audit_log").insert({
+            tenant_id: tenant.id,
+            app_instance_id: appInstanceId,
+            current_version: currentVersion,
+            latest_version: release.version,
+            channel,
+            platform,
+            arch,
+            result: "error",
+            reason: `Failed to create signed URL for chunk ${i}`,
+          });
+          return new Response(JSON.stringify({ success: false, message: "Failed to create download URLs" }), {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        urls.push(chunkSigned.signedUrl);
+      }
+      chunkUrls = urls;
+    } else {
+      const { data: signedUrlData, error: signedUrlErr } = await supabase.storage
+        .from(release.storage_bucket)
+        .createSignedUrl(release.storage_path, 300);
+
+      if (signedUrlErr || !signedUrlData?.signedUrl) {
+        await supabase.from("update_audit_log").insert({
+          tenant_id: tenant.id,
+          app_instance_id: appInstanceId,
+          current_version: currentVersion,
+          latest_version: release.version,
+          channel,
+          platform,
+          arch,
+          result: "error",
+          reason: signedUrlErr?.message || "Failed to create signed download URL",
+        });
+
+        return new Response(JSON.stringify({ success: false, message: "Failed to create download URL" }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      downloadUrl = signedUrlData.signedUrl;
     }
 
     await supabase.from("update_audit_log").insert({
@@ -268,9 +304,11 @@ Deno.serve(async (req) => {
       releaseNotes: release.release_notes,
       mandatory: Boolean(release.mandatory),
       minSupportedVersion: release.min_supported_version,
-      downloadUrl: signedUrlData.signedUrl,
+      downloadUrl,
+      chunkUrls,
+      chunkCount,
+      fileSize,
       fileName: release.file_name,
-      fileSize: null,
       sha256: release.sha256,
       publishedAt: release.published_at,
       message: "Update available",

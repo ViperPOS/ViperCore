@@ -6,7 +6,7 @@ import * as tus from 'tus-js-client';
 const supabaseUrl = process.env.SUPABASE_URL;
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const filePath = process.env.FILE_PATH;
-const storagePath = process.env.STORAGE_PATH;
+const storagePath = process.env.UPLOAD_PATH || process.env.STORAGE_PATH;
 
 if (!supabaseUrl || !serviceKey || !filePath || !storagePath) {
   console.error('Missing required env vars: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, FILE_PATH, STORAGE_PATH');

@@ -26,6 +26,8 @@ Deno.serve(async (req) => {
     const minSupportedVersion = String(body.minSupportedVersion || "").trim() || null;
     const mandatory = Boolean(body.mandatory);
     const rolloutPercent = Number(body.rolloutPercent ?? 100);
+    const chunkCount = Number(body.chunkCount ?? 1);
+    const fileSize = body.fileSize != null ? Number(body.fileSize) : null;
 
     if (!version || !storagePath || !fileName) {
       return new Response(JSON.stringify({ success: false, message: "version, storagePath, and fileName are required" }), {
@@ -67,6 +69,8 @@ Deno.serve(async (req) => {
         min_supported_version: minSupportedVersion,
         mandatory,
         rollout_percent: Math.max(0, Math.min(100, rolloutPercent)),
+        chunk_count: Math.max(1, chunkCount),
+        file_size: fileSize,
         active: true,
         published_at: new Date().toISOString(),
       })

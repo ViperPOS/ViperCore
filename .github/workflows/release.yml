@@ -29,7 +29,7 @@ jobs:
         run: npm run build
 
       - name: Package Electron app
-        run: npm run make
+        run: npm run build && npx electron-builder --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -48,22 +48,46 @@ jobs:
       - name: Install TUS client
         run: npm install --no-save tus-js-client
 
-      - name: Upload to Supabase Storage (TUS resumable)
+      - name: Split installer into chunks
+        id: chunks
         shell: bash
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
-          export STORAGE_PATH="releases/v${VERSION}/alspos-setup-${VERSION}.exe"
+          FILE_SIZE=$(stat -c%s "dist/alspos Setup.exe" 2>/dev/null || wc -c < "dist/alspos Setup.exe")
+          CHUNK_DIR="dist/chunks"
+          mkdir -p "$CHUNK_DIR"
+          split -b 45m --numeric-suffixes --suffix-length=3 "dist/alspos Setup.exe" "${CHUNK_DIR}/chunk-"
+          CHUNK_COUNT=$(ls -1 "${CHUNK_DIR}/chunk-"* | wc -l)
+          echo "FILE_SIZE=${FILE_SIZE}" >> $GITHUB_OUTPUT
+          echo "CHUNK_COUNT=${CHUNK_COUNT}" >> $GITHUB_OUTPUT
+          echo "Split into ${CHUNK_COUNT} chunks, total size: ${FILE_SIZE} bytes"
+
+      - name: Upload chunks to Supabase Storage
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          STORAGE_PATH="releases/v${VERSION}/alspos-setup-${VERSION}.exe"
           echo "STORAGE_PATH=${STORAGE_PATH}" >> $GITHUB_ENV
-          node scripts/tus-upload.mjs
+
+          CHUNK_COUNT=${{ steps.chunks.outputs.CHUNK_COUNT }}
+          for i in $(seq 0 $((CHUNK_COUNT - 1))); do
+            INDEX=$(printf "%03d" $i)
+            CHUNK_FILE="dist/chunks/chunk-${INDEX}"
+            echo "Uploading chunk $i: ${CHUNK_FILE}"
+            export FILE_PATH="${CHUNK_FILE}"
+            export UPLOAD_PATH="${STORAGE_PATH}.part${i}"
+            node scripts/tus-upload.mjs
+          done
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          FILE_PATH: dist/alspos Setup.exe
 
       - name: Register release
         shell: bash
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
+          CHUNK_COUNT="${{ steps.chunks.outputs.CHUNK_COUNT }}"
+          FILE_SIZE="${{ steps.chunks.outputs.FILE_SIZE }}"
           
           curl -s -f -X POST \
             "${{ secrets.SUPABASE_URL }}/functions/v1/register-release" \
@@ -80,7 +104,9 @@ jobs:
               "sha256": "'"${{ steps.hash.outputs.SHA256 }}"'",
               "releaseNotes": "'"${{ github.event.head_commit.message }}"'",
               "mandatory": false,
-              "rolloutPercent": 100
+              "rolloutPercent": 100,
+              "chunkCount": '"${CHUNK_COUNT}"',
+              "fileSize": '"${FILE_SIZE}"'
             }'
 
       - name: Summary
@@ -89,6 +115,8 @@ jobs:
           echo "## Release v${{ steps.version.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **File:** alspos-setup-${{ steps.version.outputs.VERSION }}.exe" >> $GITHUB_STEP_SUMMARY
+          echo "- **Size:** ${{ steps.chunks.outputs.FILE_SIZE }} bytes" >> $GITHUB_STEP_SUMMARY
+          echo "- **Chunks:** ${{ steps.chunks.outputs.CHUNK_COUNT }}" >> $GITHUB_STEP_SUMMARY
           echo "- **SHA256:** \`${{ steps.hash.outputs.SHA256 }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Bucket:** app-releases" >> $GITHUB_STEP_SUMMARY
           echo "- **Path:** ${STORAGE_PATH}" >> $GITHUB_STEP_SUMMARY

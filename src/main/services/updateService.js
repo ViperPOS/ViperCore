@@ -1,6 +1,7 @@
 const { app } = require('electron');
 const { EventEmitter } = require('events');
 const { spawn } = require('child_process');
+const crypto = require('crypto');
 const dns = require('dns');
 const fs = require('fs');
 const path = require('path');
@@ -200,7 +201,7 @@ class UpdateService extends EventEmitter {
 
     const updateInfo = this.state.updateInfo;
 
-    if (!updateInfo?.downloadUrl) {
+    if (!updateInfo?.downloadUrl && !updateInfo?.chunkUrls) {
       throw new Error('No downloadable update is available.');
     }
 
@@ -220,35 +221,125 @@ class UpdateService extends EventEmitter {
     });
 
     try {
-      const response = await fetch(updateInfo.downloadUrl);
-      if (!response.ok || !response.body) {
-        throw new Error('Failed to download update artifact.');
-      }
-
-      const totalBytes = Number(response.headers.get('content-length') || updateInfo.fileSize || 0);
+      const isChunked = Number(updateInfo.chunkCount) > 1 && Array.isArray(updateInfo.chunkUrls) && updateInfo.chunkUrls.length > 0;
+      const totalBytes = Number(updateInfo.fileSize || 0);
       let transferredBytes = 0;
-      const writeStream = fs.createWriteStream(targetPath);
-      const readable = Readable.fromWeb(response.body);
+      const speedTracker = { bytes: 0, lastTime: Date.now(), speed: 0 };
 
-      await new Promise((resolve, reject) => {
-        readable.on('data', (chunk) => {
-          transferredBytes += chunk.length;
-          const progress = totalBytes > 0 ? Math.min(100, Math.round((transferredBytes / totalBytes) * 100)) : 0;
-          this.emit('progress', {
-            status: 'downloading',
-            progress,
-            transferredBytes,
-            totalBytes,
-            downloadedPath: targetPath,
-          });
+      const trackSpeed = (bytes) => {
+        const now = Date.now();
+        speedTracker.bytes += bytes;
+        const elapsed = now - speedTracker.lastTime;
+        if (elapsed >= 1000) {
+          speedTracker.speed = Math.round((speedTracker.bytes / elapsed) * 1000);
+          speedTracker.bytes = 0;
+          speedTracker.lastTime = now;
+        }
+        return speedTracker.speed;
+      };
+
+      const buildProgressPayload = (extra = {}) => {
+        const speed = speedTracker.speed;
+        const remaining = speed > 0 && totalBytes > 0 ? Math.max(0, Math.ceil((totalBytes - transferredBytes) / speed)) : null;
+        return {
+          status: 'downloading',
+          progress: totalBytes > 0 ? Math.min(100, Math.round((transferredBytes / totalBytes) * 100)) : 0,
+          transferredBytes,
+          totalBytes,
+          downloadedPath: targetPath,
+          speed,
+          remainingSeconds: remaining,
+          ...extra,
+        };
+      };
+
+      if (isChunked) {
+        const writeStream = fs.createWriteStream(targetPath);
+
+        writeStream.on('error', (err) => {
+          writeStream.destroy();
+          throw err;
         });
 
-        readable.on('error', reject);
-        writeStream.on('error', reject);
-        writeStream.on('finish', resolve);
+        try {
+          for (let i = 0; i < updateInfo.chunkUrls.length; i++) {
+            this.emitState({
+              message: `Downloading chunk ${i + 1} of ${updateInfo.chunkUrls.length}...`,
+              chunkIndex: i,
+              chunkTotal: updateInfo.chunkUrls.length,
+            });
 
-        readable.pipe(writeStream);
-      });
+            const response = await fetch(updateInfo.chunkUrls[i]);
+            if (!response.ok || !response.body) {
+              throw new Error(`Failed to download chunk ${i + 1}.`);
+            }
+
+            const readable = Readable.fromWeb(response.body);
+
+            await new Promise((resolve, reject) => {
+              readable.on('data', (chunk) => {
+                transferredBytes += chunk.length;
+                trackSpeed(chunk.length);
+                this.emit('progress', buildProgressPayload({
+                  chunkIndex: i,
+                  chunkTotal: updateInfo.chunkUrls.length,
+                }));
+              });
+
+              readable.on('error', (err) => {
+                readable.destroy();
+                reject(err);
+              });
+              readable.on('end', resolve);
+              readable.pipe(writeStream, { end: false });
+            });
+          }
+        } catch (chunkErr) {
+          writeStream.destroy();
+          await fs.promises.unlink(targetPath).catch(() => {});
+          throw chunkErr;
+        }
+
+        writeStream.end();
+        await new Promise((resolve, reject) => {
+          writeStream.on('finish', resolve);
+          writeStream.on('error', reject);
+        });
+      } else {
+        const response = await fetch(updateInfo.downloadUrl);
+        if (!response.ok || !response.body) {
+          throw new Error('Failed to download update artifact.');
+        }
+
+        const contentLength = Number(response.headers.get('content-length') || 0);
+        const effectiveTotal = totalBytes || contentLength;
+        const writeStream = fs.createWriteStream(targetPath);
+        const readable = Readable.fromWeb(response.body);
+
+        await new Promise((resolve, reject) => {
+          readable.on('data', (chunk) => {
+            transferredBytes += chunk.length;
+            trackSpeed(chunk.length);
+            this.emit('progress', buildProgressPayload());
+          });
+
+          readable.on('error', reject);
+          writeStream.on('error', reject);
+          writeStream.on('finish', resolve);
+
+          readable.pipe(writeStream);
+        });
+      }
+
+      if (updateInfo.sha256) {
+        this.emitState({ message: 'Verifying download...' });
+        const fileBuffer = await fs.promises.readFile(targetPath);
+        const hash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+        if (hash !== updateInfo.sha256) {
+          await fs.promises.unlink(targetPath).catch(() => {});
+          throw new Error('Download verification failed. The file may be corrupted.');
+        }
+      }
 
       return this.emitState({
         status: 'downloaded',
