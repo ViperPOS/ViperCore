@@ -91,7 +91,7 @@ jobs:
           
           curl -s -f -X POST \
             "${{ secrets.SUPABASE_URL }}/functions/v1/register-release" \
-            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
             -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
             -H "Content-Type: application/json" \
             -d '{

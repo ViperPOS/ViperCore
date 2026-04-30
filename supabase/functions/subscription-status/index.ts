@@ -20,6 +20,16 @@ Deno.serve(async (req) => {
   }
 
   try {
+    const authHeader = req.headers.get("Authorization") || "";
+    const expectedAnonKey = Deno.env.get("SB_ANON_KEY") || Deno.env.get("SUPABASE_ANON_KEY") || "";
+    const token = authHeader.replace(/^Bearer\s+/i, "");
+    if (!expectedAnonKey || token !== expectedAnonKey) {
+      return new Response(JSON.stringify({ success: false, message: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const body = await req.json();
     const tenantId = String(body.tenantId || "").trim();
     const appInstanceId = String(body.appInstanceId || "").trim();

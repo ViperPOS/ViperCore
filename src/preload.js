@@ -63,6 +63,9 @@ const allowedInvokeChannels = new Set([
   'save-item-order',
   'reset-item-order',
   'get-db-encryption-key',
+  'edit-employee',
+  'delete-employee',
+  'change-user-pin',
 ]);
 
 const allowedSendChannels = new Set([

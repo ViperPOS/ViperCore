@@ -1,5 +1,4 @@
 import { corsHeaders } from "../_shared/cors.ts";
-import { getServiceClient } from "../_shared/supabase.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -14,6 +13,17 @@ Deno.serve(async (req) => {
   }
 
   try {
+    const authHeader = req.headers.get("Authorization") || "";
+    const serviceRoleKey = Deno.env.get("SB_SERVICE_ROLE_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+    const token = authHeader.replace(/^Bearer\s+/i, "");
+    if (!serviceRoleKey || token !== serviceRoleKey) {
+      return new Response(JSON.stringify({ success: false, message: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const { getServiceClient } = await import("../_shared/supabase.ts");
     const body = await req.json();
     const version = String(body.version || "").trim();
     const platform = String(body.platform || "win32").trim();

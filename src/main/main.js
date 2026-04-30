@@ -152,7 +152,14 @@ function isDatabaseEncrypted(dbPath, encKey) {
     }
 }
 
+function assertHexKey(key) {
+    if (!/^[0-9a-f]{64}$/.test(key)) {
+        throw new Error('Invalid encryption key format.');
+    }
+}
+
 function migrateToEncrypted(dbPath, encKey) {
+    assertHexKey(encKey);
     const tempPath = dbPath + '.enc.tmp';
     let srcDb, destDb;
     try {
@@ -163,7 +170,8 @@ function migrateToEncrypted(dbPath, encKey) {
         destDb.pragma(`key = '${encKey}'`);
         destDb.pragma('journal_mode = WAL');
 
-        srcDb.exec(`ATTACH DATABASE '${tempPath.replace(/'/g, "''")}' AS encrypted KEY '${encKey}'`);
+        const escapedPath = tempPath.replace(/'/g, "''");
+        srcDb.exec(`ATTACH DATABASE '${escapedPath}' AS encrypted KEY "x'${encKey}'"`);
         srcDb.exec("SELECT sqlcipher_export('encrypted')");
         srcDb.exec("DETACH DATABASE encrypted");
 

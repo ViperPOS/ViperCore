@@ -44,7 +44,15 @@ async function restoreLCdbLocal(sourceDbPath, sourceKey = null, currentKey = nul
     }
 }
 
+function assertHexKey(key, label = 'key') {
+    if (!/^[0-9a-f]+$/i.test(key) || key.length % 2 !== 0) {
+        throw new Error(`Invalid ${label} format.`);
+    }
+}
+
 function reEncryptDatabase(sourcePath, sourceKey, destPath, destKey) {
+    assertHexKey(sourceKey, 'source key');
+    assertHexKey(destKey, 'destination key');
     const Database = require('better-sqlite3-multiple-ciphers');
     const tempPath = destPath + '.reenc.tmp';
     let srcDb, destDb;
@@ -59,7 +67,7 @@ function reEncryptDatabase(sourcePath, sourceKey, destPath, destKey) {
         destDb.pragma('journal_mode = WAL');
 
         const escapedTemp = tempPath.replace(/'/g, "''");
-        srcDb.exec(`ATTACH DATABASE '${escapedTemp}' AS reencrypted KEY '${destKey}'`);
+        srcDb.exec(`ATTACH DATABASE '${escapedTemp}' AS reencrypted KEY "x'${destKey}'"`);
         srcDb.exec("SELECT sqlcipher_export('reencrypted')");
         srcDb.exec("DETACH DATABASE reencrypted");
 
