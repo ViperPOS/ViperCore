@@ -66,7 +66,7 @@ Generated: 2026-04-30
 ### 11. `is_offline` column never populated
 - **Files:** `src/main/main.js` (Orders, DeletedOrders tables)
 - **Impact:** Column exists but no code sets it to `1`.
-- **Status:** Incomplete feature — no fix needed now.
+- **Status:** Removed — deprecated feature from previous app.
 
 ### 12. `email` field silently discarded in Supabase edge functions
 - **Files:** `supabase/functions/admin-add-employee/index.ts`, `supabase/functions/initialize-tenant/index.ts`

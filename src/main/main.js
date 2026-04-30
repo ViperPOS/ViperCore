@@ -2409,12 +2409,12 @@ ipcMain.on("delete-order", async (event, { billno, reason }) => {
 
         const deleteTx = db.transaction(() => {
             db.prepare(`
-                INSERT INTO DeletedOrders (billno, kot, price, sgst, cgst, tax, cashier, date, reason, table_id, table_label, is_offline)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO DeletedOrders (billno, kot, price, sgst, cgst, tax, cashier, date, reason, table_id, table_label)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `).run(
                 order.billno, order.kot, order.price, order.sgst, order.cgst, order.tax,
                 order.cashier, order.date, reason || 'No reason provided',
-                order.table_id, order.table_label, order.is_offline
+                order.table_id, order.table_label
             );
 
             for (const detail of orderDetails) {
@@ -3260,7 +3260,6 @@ function initializeSchema() {
             tax NUMERIC NOT NULL,
             cashier INTEGER NOT NULL,
             date TEXT NOT NULL,
-            is_offline INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY (cashier) REFERENCES User(userid)
         );
 
@@ -3313,7 +3312,6 @@ function initializeSchema() {
             reason TEXT NOT NULL,
             table_id INTEGER,
             table_label TEXT,
-            is_offline INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY (cashier) REFERENCES User(userid)
         );
 
@@ -3351,6 +3349,60 @@ function initializeSchema() {
         await assertTableHasColumns('Orders', ['table_id', 'table_label']);
         await assertTableHasColumns('HeldOrders', ['table_id', 'table_label']);
         await assertTableHasColumns('DeletedOrders', ['table_id', 'table_label']);
+
+        // Drop deprecated is_offline column from Orders
+        const orderCols = db.prepare('PRAGMA table_info(Orders)').all();
+        if (orderCols.some((c) => c.name === 'is_offline')) {
+            db.exec(`
+                PRAGMA foreign_keys = OFF;
+                CREATE TABLE Orders_new (
+                    billno INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kot INTEGER NOT NULL,
+                    price NUMERIC NOT NULL,
+                    sgst NUMERIC NOT NULL,
+                    cgst NUMERIC NOT NULL,
+                    tax NUMERIC NOT NULL,
+                    cashier INTEGER NOT NULL,
+                    date TEXT NOT NULL,
+                    table_id INTEGER,
+                    table_label TEXT,
+                    FOREIGN KEY (cashier) REFERENCES User(userid)
+                );
+                INSERT INTO Orders_new (billno, kot, price, sgst, cgst, tax, cashier, date, table_id, table_label)
+                    SELECT billno, kot, price, sgst, cgst, tax, cashier, date, table_id, table_label FROM Orders;
+                DROP TABLE Orders;
+                ALTER TABLE Orders_new RENAME TO Orders;
+                PRAGMA foreign_keys = ON;
+            `);
+        }
+
+        // Drop deprecated is_offline column from DeletedOrders
+        const deletedCols = db.prepare('PRAGMA table_info(DeletedOrders)').all();
+        if (deletedCols.some((c) => c.name === 'is_offline')) {
+            db.exec(`
+                PRAGMA foreign_keys = OFF;
+                CREATE TABLE DeletedOrders_new (
+                    billno INTEGER PRIMARY KEY,
+                    kot INTEGER NOT NULL,
+                    price NUMERIC NOT NULL,
+                    sgst NUMERIC NOT NULL,
+                    cgst NUMERIC NOT NULL,
+                    tax NUMERIC NOT NULL,
+                    cashier INTEGER NOT NULL,
+                    date TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    table_id INTEGER,
+                    table_label TEXT,
+                    FOREIGN KEY (cashier) REFERENCES User(userid)
+                );
+                INSERT INTO DeletedOrders_new (billno, kot, price, sgst, cgst, tax, cashier, date, reason, table_id, table_label)
+                    SELECT billno, kot, price, sgst, cgst, tax, cashier, date, reason, table_id, table_label FROM DeletedOrders;
+                DROP TABLE DeletedOrders;
+                ALTER TABLE DeletedOrders_new RENAME TO DeletedOrders;
+                PRAGMA foreign_keys = ON;
+            `);
+        }
+
         await runDatabaseSanityChecks();
 
         // FoodItem legacy column migration
