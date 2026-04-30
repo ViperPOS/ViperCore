@@ -62,6 +62,7 @@ const allowedInvokeChannels = new Set([
   'get-food-items-with-order',
   'save-item-order',
   'reset-item-order',
+  'get-db-encryption-key',
 ]);
 
 const allowedSendChannels = new Set([

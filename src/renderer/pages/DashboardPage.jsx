@@ -188,7 +188,13 @@ export default function DashboardPage({ user, onLogout }) {
         </div>
 
         <SidebarNav
-          sections={navSections}
+          sections={navSections.map((section) => {
+            if (section.key !== 'settings') return section;
+            return {
+              ...section,
+              subViews: section.subViews.filter((sub) => sub.key !== 'restore' || user?.isAdmin),
+            };
+          })}
           activeView={activeView}
           activeSubView={activeSubView}
           expandedView={expandedView}

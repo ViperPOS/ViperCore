@@ -251,21 +251,29 @@ function FeatureTogglesTab() {
 }
 
 function EmployeeManagementTab({ user }) {
-  const { isOnline } = useNetworkStatus();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [showAddEmployeeModal, setShowAddEmployeeModal] = useState(false);
+  const [showEditEmployeeModal, setShowEditEmployeeModal] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
   const addEmployeeNameInputRef = useRef(null);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [form, setForm] = useState({
     name: '',
     username: '',
     email: '',
     password: '',
     pin: '',
-    adminPassword: '',
+  });
+  const [editForm, setEditForm] = useState({
+    userid: null,
+    name: '',
+    username: '',
+    email: '',
+    isAdmin: false,
   });
   const [pinReset, setPinReset] = useState({ userid: null, pin: '' });
 
@@ -304,18 +312,28 @@ function EmployeeManagementTab({ user }) {
     }
   }, [showAddEmployeeModal]);
 
+  const filteredUsers = users.filter((entry) => {
+    if (!searchQuery.trim()) return true;
+    const query = searchQuery.toLowerCase();
+    return (
+      entry.name.toLowerCase().includes(query) ||
+      entry.username.toLowerCase().includes(query) ||
+      entry.email.toLowerCase().includes(query) ||
+      (entry.isAdmin ? 'admin' : 'employee').includes(query)
+    );
+  });
+
   const createEmployee = async () => {
     setBusy(true);
     setError('');
     setMessage('');
     try {
       const result = await ipcService.invoke('add-new-user', {
-        ...form,
         name: form.name.trim(),
         username: form.username.trim(),
         email: form.email.trim(),
+        password: form.password,
         pin: form.pin.trim(),
-        adminPassword: form.adminPassword,
       });
 
       if (!result?.success) {
@@ -324,12 +342,77 @@ function EmployeeManagementTab({ user }) {
       }
 
       setMessage(result?.message || 'Employee account created.');
-      setForm({ name: '', username: '', email: '', password: '', pin: '', adminPassword: '' });
+      setForm({ name: '', username: '', email: '', password: '', pin: '' });
       setShowAddEmployeeModal(false);
       await loadUsers();
     } catch (err) {
       console.error('Create employee failed:', err);
       setError('Failed to create employee account.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openEditModal = (entry) => {
+    setEditForm({
+      userid: entry.userid,
+      name: entry.name,
+      username: entry.username,
+      email: entry.email || '',
+      isAdmin: entry.isAdmin,
+    });
+    setShowEditEmployeeModal(true);
+    setError('');
+    setMessage('');
+  };
+
+  const updateEmployee = async () => {
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const result = await ipcService.invoke('edit-employee', {
+        userid: editForm.userid,
+        name: editForm.name.trim(),
+        username: editForm.username.trim(),
+        email: editForm.email.trim(),
+        isAdmin: editForm.isAdmin,
+      });
+
+      if (!result?.success) {
+        setError(result?.message || 'Failed to update employee.');
+        return;
+      }
+
+      setMessage(result?.message || 'Employee updated successfully.');
+      setShowEditEmployeeModal(false);
+      await loadUsers();
+    } catch (err) {
+      console.error('Edit employee failed:', err);
+      setError('Failed to update employee.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteEmployee = async (userid) => {
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const result = await ipcService.invoke('delete-employee', { userid });
+
+      if (!result?.success) {
+        setError(result?.message || 'Failed to delete employee.');
+        return;
+      }
+
+      setMessage(result?.message || 'Employee deleted successfully.');
+      setShowDeleteConfirm(null);
+      await loadUsers();
+    } catch (err) {
+      console.error('Delete employee failed:', err);
+      setError('Failed to delete employee.');
     } finally {
       setBusy(false);
     }
@@ -344,7 +427,6 @@ function EmployeeManagementTab({ user }) {
       const result = await ipcService.invoke('reset-user-pin', {
         userid: pinReset.userid,
         newPin: pinReset.pin.trim(),
-        adminPassword: form.adminPassword,
       });
 
       if (!result?.success) {
@@ -375,16 +457,16 @@ function EmployeeManagementTab({ user }) {
     <section className="surface-card rounded-2xl p-5 space-y-4">
       <div>
         <h2 className="text-xl font-black text-on-light">Employee Accounts</h2>
-        <p className="text-sm text-muted mt-1">Create employee usernames/passwords and assign PINs.</p>
-        {!isOnline ? (
-          <p className="text-xs mt-2" style={{ color: 'var(--status-warning)' }}>
-            You are offline. New employees will be saved locally but won't sync to the server until you reconnect.
-          </p>
-        ) : null}
+        <p className="text-sm text-muted mt-1">Create, edit, and manage employee accounts. Employees are stored locally.</p>
       </div>
 
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-muted">Use the button to open a focused Add Employee dialog.</p>
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <input
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="surface-input h-10 rounded-lg px-3 w-full sm:w-64"
+          placeholder="Search employees..."
+        />
         <Button onClick={() => setShowAddEmployeeModal(true)} disabled={busy}>Add Employee</Button>
       </div>
 
@@ -406,7 +488,6 @@ function EmployeeManagementTab({ user }) {
                 <input type="email" value={form.email} onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))} className="surface-input h-10 rounded-lg px-3" placeholder="Email (optional)" />
                 <input type="password" value={form.password} onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))} className="surface-input h-10 rounded-lg px-3" placeholder="Password (min 6)" />
                 <input value={form.pin} onChange={(e) => setForm((prev) => ({ ...prev, pin: e.target.value.replace(/\D+/g, '').slice(0, 8) }))} className="surface-input h-10 rounded-lg px-3" placeholder="PIN (4-8 digits)" />
-                <input type="password" value={form.adminPassword} onChange={(e) => setForm((prev) => ({ ...prev, adminPassword: e.target.value }))} className="surface-input h-10 rounded-lg px-3" placeholder="Confirm Admin Password" />
               </div>
 
               <div className="mt-4 flex justify-end gap-2">
@@ -418,44 +499,172 @@ function EmployeeManagementTab({ user }) {
         </div>
       )}
 
+      {showEditEmployeeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60" onClick={() => !busy && setShowEditEmployeeModal(false)}>
+          <div className="surface-card w-full max-w-lg rounded-2xl p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-4">
+              <h3 className="text-lg font-black text-on-light">Edit Employee</h3>
+              <p className="text-sm text-muted mt-1">Update employee details and role.</p>
+            </div>
+
+            <form onSubmit={(event) => {
+              event.preventDefault();
+              updateEmployee();
+            }}>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs uppercase text-muted mb-1">Name</label>
+                  <input
+                    value={editForm.name}
+                    onChange={(e) => setEditForm((prev) => ({ ...prev, name: e.target.value }))}
+                    className="surface-input h-10 w-full rounded-lg px-3"
+                    placeholder="Employee Name"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs uppercase text-muted mb-1">Username</label>
+                  <input
+                    value={editForm.username}
+                    onChange={(e) => setEditForm((prev) => ({ ...prev, username: e.target.value }))}
+                    className="surface-input h-10 w-full rounded-lg px-3"
+                    placeholder="Username"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs uppercase text-muted mb-1">Email</label>
+                  <input
+                    type="email"
+                    value={editForm.email}
+                    onChange={(e) => setEditForm((prev) => ({ ...prev, email: e.target.value }))}
+                    className="surface-input h-10 w-full rounded-lg px-3"
+                    placeholder="Email (optional)"
+                  />
+                </div>
+                <label className="flex items-center justify-between gap-3 rounded-lg border border-on-light p-3">
+                  <div>
+                    <p className="text-sm text-on-light">Admin Role</p>
+                    <p className="text-xs text-muted mt-1">Grant admin privileges to this employee.</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={editForm.isAdmin}
+                    onChange={(e) => setEditForm((prev) => ({ ...prev, isAdmin: e.target.checked }))}
+                    className="h-4 w-4"
+                    disabled={Number(editForm.userid) === Number(user?.userid)}
+                  />
+                </label>
+              </div>
+
+              <div className="mt-4 flex justify-end gap-2">
+                <Button type="button" variant="secondary" onClick={() => setShowEditEmployeeModal(false)} disabled={busy}>Cancel</Button>
+                <Button type="submit" disabled={busy}>{busy ? 'Saving...' : 'Save Changes'}</Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60" onClick={() => !busy && setShowDeleteConfirm(null)}>
+          <div className="surface-card w-full max-w-md rounded-2xl p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-4">
+              <h3 className="text-lg font-black text-on-light">Delete Employee</h3>
+              <p className="text-sm text-muted mt-2">
+                Are you sure you want to delete <strong>{showDeleteConfirm.name}</strong> ({showDeleteConfirm.username})?
+              </p>
+              <p className="text-xs text-muted mt-1">
+                If this employee has order history, they will be deactivated instead of permanently deleted.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="secondary" onClick={() => setShowDeleteConfirm(null)} disabled={busy}>Cancel</Button>
+              <Button
+                type="button"
+                onClick={() => deleteEmployee(showDeleteConfirm.userid)}
+                disabled={busy}
+                style={{ backgroundColor: 'var(--status-error, #ef4444)', color: '#fff' }}
+              >
+                {busy ? 'Deleting...' : 'Delete'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <p className="text-sm text-muted">Loading users...</p>
       ) : (
         <div className="overflow-auto rounded-lg border border-on-light">
-          <table className="w-full min-w-[560px]">
+          <table className="w-full min-w-[700px]">
             <thead className="bg-input border-b border-on-light">
               <tr>
                 <th className="text-left px-3 py-2 text-xs uppercase text-muted">Name</th>
                 <th className="text-left px-3 py-2 text-xs uppercase text-muted">Username</th>
+                <th className="text-left px-3 py-2 text-xs uppercase text-muted">Email</th>
                 <th className="text-left px-3 py-2 text-xs uppercase text-muted">Role</th>
                 <th className="text-left px-3 py-2 text-xs uppercase text-muted">Reset PIN</th>
+                <th className="text-left px-3 py-2 text-xs uppercase text-muted">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {users.map((entry) => (
-                <tr key={entry.userid} className="border-b border-subtle">
-                  <td className="px-3 py-2 text-sm text-on-light">{entry.name}</td>
-                  <td className="px-3 py-2 text-sm text-on-light">{entry.username}</td>
-                  <td className="px-3 py-2 text-sm text-on-light">{entry.isAdmin ? 'Admin' : 'Employee'}</td>
-                  <td className="px-3 py-2 text-sm text-on-light">
-                    <div className="flex gap-2">
-                      <input
-                        value={pinReset.userid === entry.userid ? pinReset.pin : ''}
-                        onChange={(e) => setPinReset({ userid: entry.userid, pin: e.target.value.replace(/\D+/g, '').slice(0, 8) })}
-                        className="surface-input h-9 rounded px-2 w-28"
-                        placeholder="New PIN"
-                      />
-                      <Button
-                        size="sm"
-                        onClick={resetPin}
-                        disabled={busy || pinReset.userid !== entry.userid || !pinReset.pin}
-                      >
-                        Reset
-                      </Button>
-                    </div>
+              {filteredUsers.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-3 py-4 text-sm text-muted text-center">
+                    {searchQuery ? 'No employees match your search.' : 'No employees found.'}
                   </td>
                 </tr>
-              ))}
+              ) : (
+                filteredUsers.map((entry) => (
+                  <tr key={entry.userid} className="border-b border-subtle">
+                    <td className="px-3 py-2 text-sm text-on-light">{entry.name}</td>
+                    <td className="px-3 py-2 text-sm text-on-light">{entry.username}</td>
+                    <td className="px-3 py-2 text-sm text-on-light">{entry.email || '-'}</td>
+                    <td className="px-3 py-2 text-sm text-on-light">
+                      <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold ${entry.isAdmin ? 'bg-primary/15 text-primary' : 'bg-black/10 text-on-light'}`}>
+                        {entry.isAdmin ? 'Admin' : 'Employee'}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-sm text-on-light">
+                      <div className="flex gap-2">
+                        <input
+                          value={pinReset.userid === entry.userid ? pinReset.pin : ''}
+                          onChange={(e) => setPinReset({ userid: entry.userid, pin: e.target.value.replace(/\D+/g, '').slice(0, 8) })}
+                          className="surface-input h-9 rounded px-2 w-24"
+                          placeholder="New PIN"
+                        />
+                        <Button
+                          size="sm"
+                          onClick={resetPin}
+                          disabled={busy || pinReset.userid !== entry.userid || !pinReset.pin}
+                        >
+                          Reset
+                        </Button>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-sm text-on-light">
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="secondary" onClick={() => openEditModal(entry)} disabled={busy}>
+                          Edit
+                        </Button>
+                        {Number(entry.userid) !== Number(user?.userid) && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => setShowDeleteConfirm(entry)}
+                            disabled={busy}
+                            style={{ color: 'var(--status-error, #ef4444)', borderColor: 'var(--status-error, #ef4444)' }}
+                          >
+                            Delete
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -841,8 +1050,11 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
   const [email, setEmail] = useState(user?.email || '');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [currentPin, setCurrentPin] = useState('');
+  const [newPin, setNewPin] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
+  const [savingPin, setSavingPin] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
@@ -914,6 +1126,37 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
     }
   };
 
+  const changePin = async () => {
+    clearAlerts();
+    if (!user?.userid) {
+      setError('No active session found.');
+      return;
+    }
+
+    setSavingPin(true);
+    try {
+      const result = await ipcService.invoke('change-user-pin', {
+        userid: user.userid,
+        currentPin,
+        newPin,
+      });
+
+      if (!result?.success) {
+        setError(result?.message || 'Failed to change PIN.');
+        return;
+      }
+
+      setMessage(result.message || 'PIN changed successfully.');
+      setCurrentPin('');
+      setNewPin('');
+    } catch (pinError) {
+      console.error('PIN update failed:', pinError);
+      setError('Failed to change PIN.');
+    } finally {
+      setSavingPin(false);
+    }
+  };
+
   const handleExitApp = () => {
     ipcService.send('exit-app');
   };
@@ -950,7 +1193,7 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
           <section className="surface-card rounded-2xl p-5 space-y-4">
             <div>
               <h2 className="text-xl font-black text-on-light">Security</h2>
-              <p className="text-sm text-muted">Change your password securely.</p>
+              <p className="text-sm text-muted">Change your password and PIN.</p>
             </div>
 
             <div className="space-y-3">
@@ -965,6 +1208,19 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
             </div>
 
             <Button onClick={changePassword} disabled={savingPassword}>{savingPassword ? 'Updating...' : 'Change Password'}</Button>
+
+            <div className="border-t border-on-light pt-4 space-y-3">
+              <div>
+                <label className="block text-xs uppercase text-muted mb-1">Current PIN</label>
+                <input value={currentPin} onChange={(e) => setCurrentPin(e.target.value.replace(/\D+/g, '').slice(0, 8))} className="surface-input h-10 w-full rounded-lg px-3" placeholder="4-8 digits" />
+              </div>
+              <div>
+                <label className="block text-xs uppercase text-muted mb-1">New PIN</label>
+                <input value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D+/g, '').slice(0, 8))} className="surface-input h-10 w-full rounded-lg px-3" placeholder="4-8 digits" />
+              </div>
+            </div>
+
+            <Button onClick={changePin} disabled={savingPin}>{savingPin ? 'Updating...' : 'Change PIN'}</Button>
           </section>
 
           {error ? <p className="text-sm text-error xl:col-span-2">{error}</p> : null}
@@ -994,7 +1250,7 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
         <BackupRestorePage mode="backup" />
       )}
 
-      {activeTab === 'restore' && (
+      {activeTab === 'restore' && user?.isAdmin && (
         <BackupRestorePage mode="restore" />
       )}
 

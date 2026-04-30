@@ -3,7 +3,7 @@ const path = require("path");
 const url = require("url");
 const crypto = require('crypto');
 const dns = require('dns');
-const Database = require('better-sqlite3');
+const Database = require('better-sqlite3-multiple-ciphers');
 const fs = require('fs');
 const Store = require('electron-store');
 const printService = require('./services/printService');
@@ -16,6 +16,17 @@ const {
 } = require('./auth');
 let mainWindow;
 let store;
+
+const DB_CIPHER_KEY = 'dbEncryptionKey';
+
+function getOrCreateEncryptionKey() {
+    let key = store.get(DB_CIPHER_KEY);
+    if (!key) {
+        key = crypto.randomBytes(32).toString('hex');
+        store.set(DB_CIPHER_KEY, key);
+    }
+    return key;
+}
 
 function getLocalDateString(date = new Date()) {
     const year = date.getFullYear();
@@ -82,12 +93,21 @@ async function initializeDatabaseConnection() {
     const maxAttempts = 5;
     const retryDelayMs = 500;
     const dbPath = await ensureDatabaseFileInUserData();
+    const encKey = getOrCreateEncryptionKey();
 
     console.log(`📊 Using database at: ${dbPath}`);
+
+    // Check if the existing DB is already encrypted
+    const needsMigration = !isDatabaseEncrypted(dbPath, encKey);
+    if (needsMigration) {
+        console.log('🔐 Migrating unencrypted database to encrypted...');
+        migrateToEncrypted(dbPath, encKey);
+    }
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         try {
             db = new Database(dbPath, { readonly: false });
+            db.pragma(`key = '${encKey}'`);
             db.pragma('busy_timeout = 5000');
             db.pragma('foreign_keys = ON');
             db.pragma('journal_mode = WAL');
@@ -116,10 +136,57 @@ async function initializeDatabaseConnection() {
     }
 }
 
+function isDatabaseEncrypted(dbPath, encKey) {
+    let testDb;
+    try {
+        testDb = new Database(dbPath, { readonly: true });
+        testDb.pragma(`key = '${encKey}'`);
+        testDb.prepare('SELECT count(*) FROM sqlite_master').get();
+        return true;
+    } catch {
+        return false;
+    } finally {
+        if (testDb) {
+            try { testDb.close(); } catch (_) {}
+        }
+    }
+}
+
+function migrateToEncrypted(dbPath, encKey) {
+    const tempPath = dbPath + '.enc.tmp';
+    let srcDb, destDb;
+    try {
+        srcDb = new Database(dbPath, { readonly: false });
+        srcDb.pragma('journal_mode = DELETE');
+
+        destDb = new Database(tempPath);
+        destDb.pragma(`key = '${encKey}'`);
+        destDb.pragma('journal_mode = WAL');
+
+        srcDb.exec(`ATTACH DATABASE '${tempPath.replace(/'/g, "''")}' AS encrypted KEY '${encKey}'`);
+        srcDb.exec("SELECT sqlcipher_export('encrypted')");
+        srcDb.exec("DETACH DATABASE encrypted");
+
+        destDb.close();
+        srcDb.close();
+
+        fs.copyFileSync(tempPath, dbPath);
+        console.log('🔐 Database encrypted successfully.');
+    } catch (err) {
+        console.error('❌ Encryption migration failed:', err.message);
+        throw err;
+    } finally {
+        if (srcDb) try { srcDb.close(); } catch (_) {}
+        if (destDb) try { destDb.close(); } catch (_) {}
+        try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch (_) {}
+    }
+}
+
 
 async function initStore() {
     try {
         store = new Store({
+            safeStorage: true,
             defaults: {
                 appInstanceId: crypto.randomUUID(),
                 printerConfig: {
@@ -134,6 +201,7 @@ async function initStore() {
         const storePath = new StoreClass({ cwd: app.getPath('userData') }).path;
         try { fs.unlinkSync(storePath); } catch (_) {}
         store = new StoreClass({
+            safeStorage: true,
             defaults: {
                 appInstanceId: crypto.randomUUID(),
                 printerConfig: {
@@ -1227,49 +1295,57 @@ function setupIPC() {
         }
   });
 
+  // IPC handler for changing own PIN
+    ipcMain.handle("change-user-pin", async (event, payload) => {
+        try {
+            const sessionUser = store.get('sessionUser');
+            if (!sessionUser?.userid) {
+                return { success: false, message: 'No active session found.' };
+            }
+
+            const userid = Number(payload?.userid);
+            const currentPin = String(payload?.currentPin || '');
+            const newPin = String(payload?.newPin || '');
+
+            if (Number(sessionUser.userid) !== userid) {
+                return { success: false, message: 'Not allowed to change this PIN.' };
+            }
+
+            if (!isValidPin(newPin)) {
+                return { success: false, message: 'New PIN must be 4 to 8 digits.' };
+            }
+
+            const user = await dbGetAsync('SELECT pin_hash FROM User WHERE userid = ? LIMIT 1', [userid]);
+            if (!user || !user.pin_hash || !compareSecret(currentPin, user.pin_hash)) {
+                return { success: false, message: 'Current PIN is incorrect.' };
+            }
+
+            await dbRunAsync('UPDATE User SET pin_hash = ? WHERE userid = ?', [hashSecret(newPin), userid]);
+            return { success: true, message: 'PIN changed successfully.' };
+        } catch (error) {
+            console.error('Change PIN error:', error);
+            return { success: false, message: 'Failed to change PIN.' };
+        }
+  });
+
   // IPC handler for adding new user
     ipcMain.handle("add-new-user", async (event, payload) => {
         try {
-            const sessionUser = await ensureAdminSession();
-            const setupRow = await getAppSetupRow();
-            const remoteConfig = getRemoteAuthConfig(setupRow);
+            await ensureAdminSession();
 
             const name = String(payload?.name || '').trim();
             const username = String(payload?.username || '').trim().toLowerCase();
             const email = String(payload?.email || '').trim();
             const password = String(payload?.password || '');
             const pin = String(payload?.pin || '').trim();
-            const adminPassword = String(payload?.adminPassword || '');
 
             if (!name || !username || password.length < 6 || !isValidPin(pin)) {
                 return { success: false, message: 'Name, username, password (min 6), and PIN (4-8 digits) are required.' };
             }
 
-            if (remoteConfig && !adminPassword) {
-                return { success: false, message: 'Admin password is required to sync employee to server.' };
-            }
-
             const existing = await dbGetAsync('SELECT userid FROM User WHERE LOWER(username) = LOWER(?) LIMIT 1', [username]);
             if (existing) {
                 return { success: false, message: 'Username already exists.' };
-            }
-
-            let remoteWarning = '';
-            if (remoteConfig) {
-                try {
-                    await callRemoteAuthFunction(remoteConfig, 'admin-add-employee', {
-                        tenantId: setupRow.tenant_id,
-                        adminUsername: sessionUser.username,
-                        adminPassword,
-                        name,
-                        username,
-                        email,
-                        password,
-                        pin,
-                    });
-                } catch (remoteErr) {
-                    remoteWarning = ` Saved locally but server sync failed: ${remoteErr.message}`;
-                }
             }
 
             await insertUserRecord({
@@ -1282,7 +1358,7 @@ function setupIPC() {
                 active: 1,
             });
 
-            return { success: true, message: `Employee account created.${remoteWarning}` };
+            return { success: true, message: 'Employee account created.' };
         } catch (error) {
             console.error('Add employee user error:', error);
             return { success: false, message: error.message || 'Failed to add employee.' };
@@ -1317,43 +1393,21 @@ function setupIPC() {
 
     ipcMain.handle('reset-user-pin', async (event, payload) => {
         try {
-            const sessionUser = await ensureAdminSession();
-            const setupRow = await getAppSetupRow();
-            const remoteConfig = getRemoteAuthConfig(setupRow);
+            await ensureAdminSession();
 
             const userid = Number(payload?.userid);
             const newPin = String(payload?.newPin || '').trim();
-            const adminPassword = String(payload?.adminPassword || '');
 
             if (!userid || !isValidPin(newPin)) {
                 return { success: false, message: 'Valid user and new PIN are required.' };
             }
 
             const targetUser = await dbGetAsync(
-                'SELECT username FROM User WHERE userid = ? LIMIT 1',
+                'SELECT userid FROM User WHERE userid = ? LIMIT 1',
                 [userid]
             );
             if (!targetUser) {
                 return { success: false, message: 'Target user not found.' };
-            }
-
-            if (remoteConfig) {
-                if (!adminPassword) {
-                    return { success: false, message: 'Admin password is required to sync PIN reset to server.' };
-                }
-
-                try {
-                    await callRemoteAuthFunction(remoteConfig, 'admin-reset-pin', {
-                        tenantId: setupRow.tenant_id,
-                        adminUsername: sessionUser.username,
-                        adminPassword,
-                        targetUsername: targetUser.username,
-                        newPin,
-                    });
-                } catch (remoteErr) {
-                    await dbRunAsync('UPDATE User SET pin_hash = ? WHERE userid = ?', [hashSecret(newPin), userid]);
-                    return { success: true, message: `PIN reset locally but server sync failed: ${remoteErr.message}` };
-                }
             }
 
             await dbRunAsync('UPDATE User SET pin_hash = ? WHERE userid = ?', [hashSecret(newPin), userid]);
@@ -1363,6 +1417,90 @@ function setupIPC() {
             return { success: false, message: error.message || 'Failed to reset PIN.' };
         }
   });
+
+    ipcMain.handle('edit-employee', async (event, payload) => {
+        try {
+            const sessionUser = await ensureAdminSession();
+
+            const userid = Number(payload?.userid);
+            const name = String(payload?.name || '').trim();
+            const username = String(payload?.username || '').trim().toLowerCase();
+            const email = String(payload?.email || '').trim();
+            const isAdmin = payload?.isAdmin ? 1 : 0;
+
+            if (!userid || !name || !username) {
+                return { success: false, message: 'User ID, name, and username are required.' };
+            }
+
+            const existing = await dbGetAsync(
+                'SELECT userid FROM User WHERE LOWER(username) = LOWER(?) AND userid != ? LIMIT 1',
+                [username, userid]
+            );
+            if (existing) {
+                return { success: false, message: 'Username already in use by another employee.' };
+            }
+
+            const targetUser = await dbGetAsync(
+                'SELECT userid, is_admin FROM User WHERE userid = ? LIMIT 1',
+                [userid]
+            );
+            if (!targetUser) {
+                return { success: false, message: 'Employee not found.' };
+            }
+
+            if (Number(sessionUser.userid) === userid && !isAdmin) {
+                return { success: false, message: 'Cannot remove your own admin role.' };
+            }
+
+            await dbRunAsync(
+                'UPDATE User SET uname = ?, username = ?, email = ?, is_admin = ? WHERE userid = ?',
+                [name, username, email || `${username}@local.user`, isAdmin, userid]
+            );
+
+            return { success: true, message: 'Employee updated successfully.' };
+        } catch (error) {
+            console.error('Edit employee error:', error);
+            return { success: false, message: error.message || 'Failed to update employee.' };
+        }
+    });
+
+    ipcMain.handle('delete-employee', async (event, payload) => {
+        try {
+            const sessionUser = await ensureAdminSession();
+
+            const userid = Number(payload?.userid);
+            if (!userid) {
+                return { success: false, message: 'Valid user ID is required.' };
+            }
+
+            if (Number(sessionUser.userid) === userid) {
+                return { success: false, message: 'Cannot delete your own account.' };
+            }
+
+            const targetUser = await dbGetAsync(
+                'SELECT userid, uname, username FROM User WHERE userid = ? LIMIT 1',
+                [userid]
+            );
+            if (!targetUser) {
+                return { success: false, message: 'Employee not found.' };
+            }
+
+            const hasOrders = await dbGetAsync(
+                'SELECT billno FROM Orders WHERE cashier = ? LIMIT 1',
+                [userid]
+            );
+            if (hasOrders) {
+                await dbRunAsync('UPDATE User SET active = 0 WHERE userid = ?', [userid]);
+                return { success: true, message: 'Employee has order history and has been deactivated instead of deleted.' };
+            }
+
+            await dbRunAsync('DELETE FROM User WHERE userid = ?', [userid]);
+            return { success: true, message: 'Employee deleted successfully.' };
+        } catch (error) {
+            console.error('Delete employee error:', error);
+            return { success: false, message: error.message || 'Failed to delete employee.' };
+        }
+    });
 
   ipcMain.handle("get-printer-config", () => {
         const config = printService.getStoredConfig();
@@ -2936,7 +3074,7 @@ ipcMain.handle('delete-billing-table', async (event, payload) => {
 // Local database backup handler
 ipcMain.on('backup-database-local', async (event) => {
     const { backupLCdbLocal } = require('./backup');
-    
+
     try {
         // Show save dialog to let user choose backup location
         const { dialog } = require('electron');
@@ -2962,12 +3100,31 @@ ipcMain.on('backup-database-local', async (event) => {
     }
 });
 
-// Local database restore handler
-ipcMain.on('restore-database-local', async (event) => {
-    const { restoreLCdbLocal } = require('./restore');
-    
+// Get database encryption key (admin only, requires credential verification)
+ipcMain.handle('get-db-encryption-key', async (event, payload) => {
     try {
-        // Show open dialog to let user select backup file
+        await ensureAdminSession();
+        const { username, password } = normalizeLoginInput(payload?.username, payload?.password);
+        if (!username || !password) {
+            return { success: false, message: 'Username and password are required.' };
+        }
+        const user = await authenticateByPassword(username, password);
+        if (!user || !user.isAdmin) {
+            return { success: false, message: 'Invalid credentials or insufficient privileges.' };
+        }
+        const key = getOrCreateEncryptionKey();
+        return { success: true, key };
+    } catch (error) {
+        return { success: false, message: error.message || 'Failed to get encryption key.' };
+    }
+});
+
+// Local database restore handler
+ipcMain.on('restore-database-local', async (event, sourceKey) => {
+    const { restoreLCdbLocal } = require('./restore');
+
+    try {
+        await ensureAdminSession();
         const { dialog } = require('electron');
         const result = await dialog.showOpenDialog(mainWindow, {
             title: 'Select Database Backup to Restore',
@@ -2983,7 +3140,8 @@ ipcMain.on('restore-database-local', async (event) => {
             return;
         }
 
-        const success = await restoreLCdbLocal(result.filePaths[0]);
+        const currentKey = getOrCreateEncryptionKey();
+        const success = await restoreLCdbLocal(result.filePaths[0], sourceKey || null, currentKey);
         event.reply('restore-local-completed', success, success ? result.filePaths[0] : null);
     } catch (error) {
         console.error('Local restore failed:', error);
