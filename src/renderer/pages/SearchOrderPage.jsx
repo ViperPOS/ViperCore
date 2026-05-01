@@ -155,13 +155,14 @@ export default function SearchOrderPage() {
 
       <section className="surface-card rounded-2xl overflow-hidden">
         <div className="max-h-[calc(100dvh-14rem)] overflow-auto">
-          <table className="w-full min-w-[980px]">
+          <table className="w-full min-w-[1080px]">
             <thead className="sticky top-0 z-10 bg-input border-b border-on-light">
               <tr>
                 <SortHeader label="Bill" sortKey="billno" sortConfig={sortConfig} onSort={requestSort} />
                 <SortHeader label="KOT" sortKey="kot" sortConfig={sortConfig} onSort={requestSort} />
                 <SortHeader label="Date" sortKey="date" sortConfig={sortConfig} onSort={requestSort} />
                 <SortHeader label="Cashier" sortKey="cashier_name" sortConfig={sortConfig} onSort={requestSort} />
+                <SortHeader label="Table" sortKey="table_label" sortConfig={sortConfig} onSort={requestSort} />
                 <SortHeader label="Price" sortKey="price" sortConfig={sortConfig} onSort={requestSort} />
                 <SortHeader label="SGST" sortKey="sgst" sortConfig={sortConfig} onSort={requestSort} />
                 <SortHeader label="CGST" sortKey="cgst" sortConfig={sortConfig} onSort={requestSort} />
@@ -171,13 +172,14 @@ export default function SearchOrderPage() {
             </thead>
             <tbody>
               {sorted.length === 0 ? (
-                <tr><td colSpan={9} className="px-3 py-6 text-sm text-muted">No orders found. Use the filters above to search.</td></tr>
+                <tr><td colSpan={10} className="px-3 py-6 text-sm text-muted">No orders found. Use the filters above to search.</td></tr>
               ) : sorted.map((order, i) => (
                 <tr key={order.billno ?? `so-${i}`} className="border-b border-subtle">
                   <td className="px-3 py-2 text-sm font-medium text-on-light">{order.billno ?? '-'}</td>
                   <td className="px-3 py-2 text-sm text-on-light">{order.kot ?? '-'}</td>
                   <td className="px-3 py-2 text-sm text-on-light">{formatDate(order.date)}</td>
                   <td className="px-3 py-2 text-sm text-on-light">{order.cashier_name ?? '-'}</td>
+                  <td className="px-3 py-2 text-sm text-on-light">{order.table_label || '-'}</td>
                   <td className="px-3 py-2 text-sm text-on-light">{formatCurrency(order.price)}</td>
                   <td className="px-3 py-2 text-sm text-on-light">{formatCurrency(order.sgst)}</td>
                   <td className="px-3 py-2 text-sm text-on-light">{formatCurrency(order.cgst)}</td>

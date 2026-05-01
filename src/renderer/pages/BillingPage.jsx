@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { RefreshCw } from 'lucide-react';
+import { ConfirmDialog } from '@/components/ui/dialogs';
+import { RefreshCw, Table } from 'lucide-react';
 import ipcService from '@/services/ipcService';
 
 function localDateString(date = new Date()) {
@@ -56,6 +57,8 @@ function TableSelectionModal({
   busy,
   form,
   setForm,
+  error,
+  message,
   onClose,
   onSelect,
   onSave,
@@ -66,7 +69,7 @@ function TableSelectionModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-      <div className="surface-card rounded-2xl w-full max-w-3xl max-h-[85vh] overflow-y-auto p-5 space-y-5">
+      <div className="surface-card rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto p-6 space-y-5">
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-lg font-black text-on-light">Select Table</h3>
@@ -82,12 +85,15 @@ function TableSelectionModal({
           </button>
         </div>
 
+        {error ? <p className="text-sm text-error">{error}</p> : null}
+        {message ? <p className="text-sm text-success">{message}</p> : null}
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <section className="rounded-xl border border-on-light p-3 space-y-3">
             <h4 className="text-sm font-bold text-on-light">Available Tables</h4>
             {loading ? <p className="text-sm text-muted">Loading tables...</p> : null}
             {!loading && tables.length === 0 ? <p className="text-sm text-muted">No tables found.</p> : null}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[340px] overflow-auto pr-1">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 max-h-[400px] overflow-auto pr-1">
               {tables.map((table) => {
                 const isActive = Number(selectedTable?.tableId) === Number(table.tableId);
                 return (
@@ -97,7 +103,10 @@ function TableSelectionModal({
                     className={`rounded-lg border p-3 text-left transition-all ${isActive ? 'border-success bg-success/10' : 'border-on-light hover:bg-hover'}`}
                     onClick={() => onSelect(table)}
                   >
-                    <p className="text-sm font-semibold text-on-light">{formatTableLabel(table)}</p>
+                    <div className="flex items-center gap-2">
+                      <Table className="h-5 w-5 text-muted shrink-0" />
+                      <p className="text-sm font-semibold text-on-light">{formatTableLabel(table)}</p>
+                    </div>
                     {isActive ? <p className="text-xs text-success mt-1">Selected</p> : null}
                     <div className="flex gap-1 mt-2">
                       <Button type="button" size="sm" variant="secondary" onClick={(e) => { e.stopPropagation(); onEdit(table); }} disabled={busy}>Edit</Button>
@@ -179,6 +188,9 @@ export default function BillingPage({ user }) {
   const [tableLoading, setTableLoading] = useState(false);
   const [tableBusy, setTableBusy] = useState(false);
   const [tableForm, setTableForm] = useState({ tableId: null, tableNumber: '', tableName: '' });
+  const [deleteTableTarget, setDeleteTableTarget] = useState(null);
+  const [tableError, setTableError] = useState('');
+  const [tableMessage, setTableMessage] = useState('');
   const [heldBills, setHeldBills] = useState([]);
   const [heldBillsOpen, setHeldBillsOpen] = useState(false);
   const [loadingHeld, setLoadingHeld] = useState(false);
@@ -425,8 +437,8 @@ export default function BillingPage({ user }) {
   }, [enableTableSelection]);
 
   const openTableModal = async () => {
-    setError('');
-    setMessage('');
+    setTableError('');
+    setTableMessage('');
     setTableModalOpen(true);
     await loadBillingTables();
   };
@@ -440,8 +452,8 @@ export default function BillingPage({ user }) {
     }
 
     setTableBusy(true);
-    setError('');
-    setMessage('');
+    setTableError('');
+    setTableMessage('');
     try {
       const channel = tableForm.tableId ? 'update-billing-table' : 'create-billing-table';
       const payload = tableForm.tableId
@@ -449,45 +461,49 @@ export default function BillingPage({ user }) {
         : { tableName, tableNumber };
       const result = await ipcService.invoke(channel, payload);
       if (!result?.success) {
-        setError(result?.message || 'Could not save table.');
+        setTableError(result?.message || 'Could not save table.');
         return;
       }
 
       const wasUpdate = Boolean(tableForm.tableId);
       setTableForm({ tableId: null, tableNumber: '', tableName: '' });
-      setMessage(wasUpdate ? 'Table updated.' : 'Table created.');
+      setTableMessage(wasUpdate ? 'Table updated.' : 'Table created.');
       await loadBillingTables();
     } catch (err) {
       console.error('Failed to save table:', err);
-      setError('Could not save table.');
+      setTableError('Could not save table.');
     } finally {
       setTableBusy(false);
     }
   };
 
   const deleteTable = async (table) => {
-    const ok = window.confirm(`Delete ${formatTableLabel(table)}?`);
-    if (!ok) return;
+    setDeleteTableTarget(table);
+  };
+
+  const confirmDeleteTable = async () => {
+    if (!deleteTableTarget) return;
 
     setTableBusy(true);
-    setError('');
-    setMessage('');
+    setTableError('');
+    setTableMessage('');
     try {
-      const result = await ipcService.invoke('delete-billing-table', { tableId: table.tableId });
+      const result = await ipcService.invoke('delete-billing-table', { tableId: deleteTableTarget.tableId });
       if (!result?.success) {
-        setError(result?.message || 'Could not delete table.');
+        setTableError(result?.message || 'Could not delete table.');
         return;
       }
 
-      if (Number(selectedTable?.tableId) === Number(table.tableId)) {
+      if (Number(selectedTable?.tableId) === Number(deleteTableTarget.tableId)) {
         setSelectedTable(null);
       }
 
-      setMessage('Table deleted.');
+      setTableMessage('Table deleted.');
+      setDeleteTableTarget(null);
       await loadBillingTables();
     } catch (err) {
       console.error('Failed to delete table:', err);
-      setError('Could not delete table.');
+      setTableError('Could not delete table.');
     } finally {
       setTableBusy(false);
     }
@@ -1118,6 +1134,8 @@ export default function BillingPage({ user }) {
         busy={tableBusy}
         form={tableForm}
         setForm={setTableForm}
+        error={tableError}
+        message={tableMessage}
         onClose={() => setTableModalOpen(false)}
         onSelect={(table) => {
           setSelectedTable(table);
@@ -1171,6 +1189,16 @@ export default function BillingPage({ user }) {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={deleteTableTarget !== null}
+        title="Delete Table"
+        message={deleteTableTarget ? `Delete ${formatTableLabel(deleteTableTarget)}? This cannot be undone.` : ''}
+        confirmText="Delete"
+        onConfirm={confirmDeleteTable}
+        onCancel={() => setDeleteTableTarget(null)}
+        busy={tableBusy}
+      />
     </div>
   );
 }

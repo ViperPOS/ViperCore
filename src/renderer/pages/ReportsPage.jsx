@@ -244,6 +244,7 @@ export default function ReportsPage({ initialReport }) {
           columns: [
             { header: 'Bill', accessor: (r) => r.billno ?? '-' },
             { header: 'Date', accessor: (r) => formatDate(r.date) },
+            { header: 'Table', accessor: (r) => r.table_label || '-' },
             { header: 'Initial', accessor: (r) => r.Initial_price ?? 0 },
             { header: 'Discount %', accessor: (r) => Number(r.discount_percentage || 0).toFixed(2) },
             { header: 'Discount Amt', accessor: (r) => r.discount_amount ?? 0 },
@@ -449,13 +450,14 @@ export default function ReportsPage({ initialReport }) {
         </section>
 
         <section className="surface-card rounded-2xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-on-light flex items-center justify-between"><h3 className="font-bold text-on-light">Discounted Orders</h3><Button variant="outline" size="sm" onClick={() => exportToExcel({ filename: 'discounted-orders', columns: [{ header: 'Bill', accessor: (r) => r.billno ?? '-' }, { header: 'Date', accessor: (r) => formatDate(r.date) }, { header: 'Initial', accessor: (r) => r.Initial_price ?? 0 }, { header: 'Discount %', accessor: (r) => Number(r.discount_percentage || 0).toFixed(2) }, { header: 'Discount Amt', accessor: (r) => r.discount_amount ?? 0 }, { header: 'Final', accessor: (r) => r.Final_Price ?? 0 }], rows: sortedDiscountedOrders })}>Export</Button></div>
+          <div className="px-4 py-3 border-b border-on-light flex items-center justify-between"><h3 className="font-bold text-on-light">Discounted Orders</h3><Button variant="outline" size="sm" onClick={() => exportToExcel({ filename: 'discounted-orders', columns: [{ header: 'Bill', accessor: (r) => r.billno ?? '-' }, { header: 'Date', accessor: (r) => formatDate(r.date) }, { header: 'Table', accessor: (r) => r.table_label || '-' }, { header: 'Initial', accessor: (r) => r.Initial_price ?? 0 }, { header: 'Discount %', accessor: (r) => Number(r.discount_percentage || 0).toFixed(2) }, { header: 'Discount Amt', accessor: (r) => r.discount_amount ?? 0 }, { header: 'Final', accessor: (r) => r.Final_Price ?? 0 }], rows: sortedDiscountedOrders })}>Export</Button></div>
           <div className="max-h-[calc(100dvh-14rem)] overflow-auto">
-            <table className="w-full min-w-[860px]">
+            <table className="w-full min-w-[960px]">
               <thead className="sticky top-0 z-10 bg-input border-b border-on-light">
                 <tr>
                   <SortHeader label="Bill" sortKey="billno" sortConfig={sortConfigDiscounted} onSort={requestSortDiscounted} />
                   <SortHeader label="Date" sortKey="date" sortConfig={sortConfigDiscounted} onSort={requestSortDiscounted} />
+                  <SortHeader label="Table" sortKey="table_label" sortConfig={sortConfigDiscounted} onSort={requestSortDiscounted} />
                   <SortHeader label="Initial" sortKey="Initial_price" sortConfig={sortConfigDiscounted} onSort={requestSortDiscounted} />
                   <SortHeader label="Discount %" sortKey="discount_percentage" sortConfig={sortConfigDiscounted} onSort={requestSortDiscounted} />
                   <SortHeader label="Discount Amt" sortKey="discount_amount" sortConfig={sortConfigDiscounted} onSort={requestSortDiscounted} />
@@ -464,11 +466,12 @@ export default function ReportsPage({ initialReport }) {
               </thead>
               <tbody>
                 {sortedDiscountedOrders.length === 0 ? (
-                  <tr><td colSpan={6} className="px-3 py-6 text-sm text-muted">No discounted orders for this range.</td></tr>
+                  <tr><td colSpan={7} className="px-3 py-6 text-sm text-muted">No discounted orders for this range.</td></tr>
                 ) : sortedDiscountedOrders.map((row, i) => (
                   <tr key={row.billno ?? `disc-${i}`} className="border-b border-subtle">
                     <td className="px-3 py-2 text-sm text-on-light">{row.billno ?? '-'}</td>
                     <td className="px-3 py-2 text-sm text-on-light">{formatDate(row.date)}</td>
+                    <td className="px-3 py-2 text-sm text-on-light">{row.table_label || '-'}</td>
                     <td className="px-3 py-2 text-sm text-on-light">{formatCurrency(row.Initial_price)}</td>
                     <td className="px-3 py-2 text-sm text-on-light">{Number(row.discount_percentage || 0).toFixed(2)}%</td>
                     <td className="px-3 py-2 text-sm text-on-light">{formatCurrency(row.discount_amount)}</td>

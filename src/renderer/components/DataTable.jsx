@@ -43,6 +43,7 @@ export function HistoryTable({ orders, exportFilename, onDelete }) {
           { header: 'Bill No', accessor: (r) => r.billno },
           { header: 'Date', accessor: (r) => formatDate(r.date) },
           { header: 'Cashier', accessor: (r) => r.cashier_name },
+          { header: 'Table', accessor: (r) => r.table_label || '-' },
           { header: 'KOT', accessor: (r) => r.kot },
           { header: 'Price', accessor: (r) => Number(r.price || 0).toFixed(2) },
           { header: 'SGST', accessor: (r) => Number(r.sgst || 0).toFixed(2) },
@@ -70,12 +71,13 @@ export function HistoryTable({ orders, exportFilename, onDelete }) {
           {exporting ? 'Exporting...' : 'Export Excel'}
         </Button>
       </div>
-      <table className={onDelete ? "w-full min-w-[1050px]" : "w-full min-w-[980px]"}>
+      <table className={onDelete ? "w-full min-w-[1150px]" : "w-full min-w-[1080px]"}>
         <thead className="sticky top-0 z-10 bg-input border-b border-on-light">
           <tr>
             <SortHeader label="Bill No" sortKey="billno" sortConfig={sortConfig} onSort={requestSort} />
             <SortHeader label="Date" sortKey="date" sortConfig={sortConfig} onSort={requestSort} />
             <SortHeader label="Cashier" sortKey="cashier_name" sortConfig={sortConfig} onSort={requestSort} />
+            <SortHeader label="Table" sortKey="table_label" sortConfig={sortConfig} onSort={requestSort} />
             <SortHeader label="KOT" sortKey="kot" sortConfig={sortConfig} onSort={requestSort} />
             <SortHeader label="Price" sortKey="price" sortConfig={sortConfig} onSort={requestSort} />
             <SortHeader label="SGST" sortKey="sgst" sortConfig={sortConfig} onSort={requestSort} />
@@ -91,6 +93,7 @@ export function HistoryTable({ orders, exportFilename, onDelete }) {
               <td className="px-3 py-2 text-sm text-on-light">{order.billno ?? '-'}</td>
               <td className="px-3 py-2 text-sm text-on-light">{formatDate(order.date)}</td>
               <td className="px-3 py-2 text-sm text-on-light">{order.cashier_name || '-'}</td>
+              <td className="px-3 py-2 text-sm text-on-light">{order.table_label || '-'}</td>
               <td className="px-3 py-2 text-sm text-on-light">{order.kot || '-'}</td>
               <td className="px-3 py-2 text-sm text-on-light">{Number(order.price || 0).toFixed(2)}</td>
               <td className="px-3 py-2 text-sm text-on-light">{Number(order.sgst || 0).toFixed(2)}</td>

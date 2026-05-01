@@ -480,7 +480,7 @@ async function ensureBillingTableSchema() {
 
     const totalTablesRow = await dbGetAsync('SELECT COUNT(*) AS count FROM DiningTable');
     if (Number(totalTablesRow?.count || 0) === 0) {
-        for (let index = 1; index <= 10; index += 1) {
+        for (let index = 1; index <= 5; index += 1) {
             await dbRunAsync(
                 `INSERT INTO DiningTable (table_name, table_number, updated_at)
                  VALUES (?, ?, datetime('now'))`,
@@ -3102,19 +3102,6 @@ ipcMain.handle('delete-billing-table', async (event, payload) => {
         const tableId = Number(payload?.tableId);
         if (!tableId) {
             return { success: false, message: 'Valid table id is required.' };
-        }
-
-        const inOrders = await dbGetAsync(
-            `SELECT billno FROM Orders WHERE table_id = ? LIMIT 1`,
-            [tableId]
-        );
-        const inHeldOrders = await dbGetAsync(
-            `SELECT heldid FROM HeldOrders WHERE table_id = ? LIMIT 1`,
-            [tableId]
-        );
-
-        if (inOrders || inHeldOrders) {
-            return { success: false, message: 'Table is already used in orders and cannot be deleted.' };
         }
 
         await dbRunAsync('DELETE FROM DiningTable WHERE table_id = ?', [tableId]);

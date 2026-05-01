@@ -326,12 +326,13 @@ export default function OperationsPage({ initialTab }) {
         <section className="surface-card rounded-2xl overflow-hidden">
           <div className="px-4 py-3 border-b border-on-light"><h3 className="font-bold text-on-light">Today's Orders</h3></div>
           <div className="max-h-[calc(100dvh-14rem)] overflow-auto">
-            <table className="w-full min-w-[760px]">
+            <table className="w-full min-w-[860px]">
               <thead className="sticky top-0 z-10 bg-input border-b border-on-light">
                 <tr>
                   <th className="px-3 py-2 text-left text-xs uppercase text-muted">Bill</th>
                   <th className="px-3 py-2 text-left text-xs uppercase text-muted">Date</th>
                   <th className="px-3 py-2 text-left text-xs uppercase text-muted">Cashier</th>
+                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Table</th>
                   <th className="px-3 py-2 text-left text-xs uppercase text-muted">Amount</th>
                   <th className="px-3 py-2 text-left text-xs uppercase text-muted">Items</th>
                   <th className="px-3 py-2 text-left text-xs uppercase text-muted">Actions</th>
@@ -339,12 +340,13 @@ export default function OperationsPage({ initialTab }) {
               </thead>
               <tbody>
                 {todayOrders.length === 0 ? (
-                  <tr><td colSpan={6} className="px-3 py-6 text-sm text-muted">No today-order data loaded.</td></tr>
+                  <tr><td colSpan={7} className="px-3 py-6 text-sm text-muted">No today-order data loaded.</td></tr>
                 ) : todayOrders.map((order, i) => (
                   <tr key={order.billno ?? `today-${i}`} className="border-b border-subtle">
                     <td className="px-3 py-2 text-sm text-on-light">{order.billno ?? '-'}</td>
                     <td className="px-3 py-2 text-sm text-on-light">{formatDate(order.date)}</td>
                     <td className="px-3 py-2 text-sm text-on-light">{order.cashier_name || '-'}</td>
+                    <td className="px-3 py-2 text-sm text-on-light">{order.table_label || '-'}</td>
                     <td className="px-3 py-2 text-sm text-on-light">{formatCurrency(order.price)}</td>
                     <td className="px-3 py-2 text-sm text-on-light">{order.food_items || '-'}</td>
                     <td className="px-3 py-2">
@@ -365,11 +367,12 @@ export default function OperationsPage({ initialTab }) {
         <section className="surface-card rounded-2xl overflow-hidden">
           <div className="px-4 py-3 border-b border-on-light"><h3 className="font-bold text-on-light">Discounted Orders</h3></div>
           <div className="max-h-[calc(100dvh-14rem)] overflow-auto">
-            <table className="w-full min-w-[860px]">
+            <table className="w-full min-w-[960px]">
               <thead className="sticky top-0 z-10 bg-input border-b border-on-light">
                 <tr>
                   <th className="px-3 py-2 text-left text-xs uppercase text-muted">Bill</th>
                   <th className="px-3 py-2 text-left text-xs uppercase text-muted">Date</th>
+                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Table</th>
                   <th className="px-3 py-2 text-left text-xs uppercase text-muted">Initial</th>
                   <th className="px-3 py-2 text-left text-xs uppercase text-muted">Discount %</th>
                   <th className="px-3 py-2 text-left text-xs uppercase text-muted">Discount Amt</th>
@@ -378,11 +381,12 @@ export default function OperationsPage({ initialTab }) {
               </thead>
               <tbody>
                 {discountedOrders.length === 0 ? (
-                  <tr><td colSpan={6} className="px-3 py-6 text-sm text-muted">No discounted-order data loaded.</td></tr>
+                  <tr><td colSpan={7} className="px-3 py-6 text-sm text-muted">No discounted-order data loaded.</td></tr>
                 ) : discountedOrders.map((order, i) => (
                   <tr key={order.billno ?? `disc-${i}`} className="border-b border-subtle">
                     <td className="px-3 py-2 text-sm text-on-light">{order.billno ?? '-'}</td>
                     <td className="px-3 py-2 text-sm text-on-light">{formatDate(order.date)}</td>
+                    <td className="px-3 py-2 text-sm text-on-light">{order.table_label || '-'}</td>
                     <td className="px-3 py-2 text-sm text-on-light">{formatCurrency(order.Initial_price)}</td>
                     <td className="px-3 py-2 text-sm text-on-light">{Number(order.discount_percentage || 0).toFixed(2)}%</td>
                     <td className="px-3 py-2 text-sm text-on-light">{formatCurrency(order.discount_amount)}</td>
@@ -399,12 +403,13 @@ export default function OperationsPage({ initialTab }) {
         <section className="surface-card rounded-2xl overflow-hidden">
           <div className="px-4 py-3 border-b border-on-light"><h3 className="font-bold text-on-light">Deleted Orders</h3></div>
           <div className="max-h-[calc(100dvh-14rem)] overflow-auto">
-            <table className="w-full min-w-[980px]">
+            <table className="w-full min-w-[1080px]">
               <thead className="sticky top-0 z-10 bg-input border-b border-on-light">
                 <tr>
                   <th className="px-3 py-2 text-left text-xs uppercase text-muted">Bill</th>
                   <th className="px-3 py-2 text-left text-xs uppercase text-muted">Date</th>
                   <th className="px-3 py-2 text-left text-xs uppercase text-muted">Cashier</th>
+                  <th className="px-3 py-2 text-left text-xs uppercase text-muted">Table</th>
                   <th className="px-3 py-2 text-left text-xs uppercase text-muted">Amount</th>
                   <th className="px-3 py-2 text-left text-xs uppercase text-muted">Reason</th>
                   <th className="px-3 py-2 text-left text-xs uppercase text-muted">Items</th>
@@ -412,12 +417,13 @@ export default function OperationsPage({ initialTab }) {
               </thead>
               <tbody>
                 {deletedOrders.length === 0 ? (
-                  <tr><td colSpan={6} className="px-3 py-6 text-sm text-muted">No deleted-order data loaded.</td></tr>
+                  <tr><td colSpan={7} className="px-3 py-6 text-sm text-muted">No deleted-order data loaded.</td></tr>
                 ) : deletedOrders.map((order, i) => (
                   <tr key={order.billno ?? `del-${i}`} className="border-b border-subtle">
                     <td className="px-3 py-2 text-sm text-on-light">{order.billno ?? '-'}</td>
                     <td className="px-3 py-2 text-sm text-on-light">{formatDate(order.date)}</td>
                     <td className="px-3 py-2 text-sm text-on-light">{order.cashier_name || '-'}</td>
+                    <td className="px-3 py-2 text-sm text-on-light">{order.table_label || '-'}</td>
                     <td className="px-3 py-2 text-sm text-on-light">{formatCurrency(order.price)}</td>
                     <td className="px-3 py-2 text-sm text-on-light">{order.reason || '-'}</td>
                     <td className="px-3 py-2 text-sm text-on-light">{order.food_items || '-'}</td>
