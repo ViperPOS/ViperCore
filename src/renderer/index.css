@@ -167,3 +167,28 @@
     opacity: 1;
   }
 }
+
+/* Toast notification styles */
+.toast-success {
+  background-color: var(--bg-input);
+  border-left: 4px solid var(--status-success);
+  color: var(--text-on-light);
+}
+
+.toast-error {
+  background-color: var(--bg-input);
+  border-left: 4px solid var(--status-error);
+  color: var(--text-on-light);
+}
+
+.toast-warning {
+  background-color: var(--bg-input);
+  border-left: 4px solid var(--status-warning);
+  color: var(--text-on-light);
+}
+
+.toast-info {
+  background-color: var(--bg-input);
+  border-left: 4px solid var(--btn-primary-bg);
+  color: var(--text-on-light);
+}
