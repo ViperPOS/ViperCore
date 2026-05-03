@@ -29,10 +29,6 @@ function compareSecret(secret, hash) {
   return bcrypt.compareSync(String(secret), String(hash));
 }
 
-function isSupabaseAuthEnabled() {
-  return readAuthConfig().allowRemoteAuth;
-}
-
 function getAuthBootstrapState() {
   const config = readAuthConfig();
 
@@ -48,6 +44,5 @@ module.exports = {
   normalizeLoginInput,
   hashSecret,
   compareSecret,
-  isSupabaseAuthEnabled,
   getAuthBootstrapState,
 };

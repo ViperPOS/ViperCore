@@ -649,41 +649,6 @@ async function callRemoteAuthFunction(remoteConfig, slug, payload) {
     return data;
 }
 
-async function ensureLocalUserFromRemote(remoteUser) {
-    const username = String(remoteUser?.username || '').trim().toLowerCase();
-    if (!username) {
-        throw new Error('Remote user payload is invalid.');
-    }
-
-    let localUser = await dbGetAsync(
-        `SELECT userid, uname, username, is_admin
-         FROM User
-         WHERE LOWER(username) = LOWER(?)
-         LIMIT 1`,
-        [username]
-    );
-
-    if (!localUser) {
-        await insertUserRecord({
-            name: String(remoteUser?.name || username),
-            username,
-            isAdmin: remoteUser?.isAdmin ? 1 : 0,
-            active: 1,
-        });
-
-        localUser = await dbGetAsync(
-            `SELECT userid, uname, username, is_admin
-             FROM User
-             WHERE LOWER(username) = LOWER(?)
-             ORDER BY userid DESC
-             LIMIT 1`,
-            [username]
-        );
-    }
-
-    return toSessionUser(localUser);
-}
-
 async function authenticateByPassword(username, password) {
     const normalized = String(username || '').trim().toLowerCase();
     const candidate = await dbGetAsync(
@@ -965,10 +930,6 @@ function setupIPC() {
                 return { success: false, message: 'App is already initialized.' };
             }
 
-            // Setup-only credentials are accepted for one-time provisioning control.
-            // They are intentionally not stored in local database or electron-store.
-            const setupUsername = String(payload?.setupUsername || '').trim();
-            const setupPassword = String(payload?.setupPassword || '');
             const supabaseProjectUrl = String(payload?.supabaseProjectUrl || DEFAULT_SUPABASE_PROJECT_URL).trim();
             const supabaseAnonKey = String(payload?.supabaseAnonKey || '').trim();
             const appInstanceId = String(payload?.appInstanceId || store.get('appInstanceId') || crypto.randomUUID()).trim();
@@ -988,10 +949,6 @@ function setupIPC() {
             const adminName = String(payload?.adminName || '').trim();
             const adminUsername = String(payload?.adminUsername || '').trim().toLowerCase();
             const adminPassword = String(payload?.adminPassword || '');
-
-            if (!setupUsername || !setupPassword) {
-                return { success: false, message: 'Setup username and password are required for one-time provisioning.' };
-            }
 
             if (!supabaseProjectUrl || !supabaseAnonKey) {
                 return { success: false, message: 'Supabase project URL and anon key are required.' };

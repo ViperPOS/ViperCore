@@ -53,13 +53,16 @@ Generated: 2026-04-30
 ### 8. Dead code: `isSupabaseAuthEnabled()` never called
 - **File:** `src/main/auth.js`
 - **Impact:** `SUPABASE_AUTH_ENABLED` env var has no effect. Auth mode decided by DB row.
-- **Status:** No fix needed — works correctly via DB path.
+- **Status:** Removed
 
 ### 9. Dead code: `ensureLocalUserFromRemote()` never called
-- **File:** `src/main/main.js:638-672`
-- **Status:** No fix needed — unused code.
+- **File:** `src/main/main.js` (removed in setup cleanup)
+- **Status:** Removed
 
-### 10. No offline subscription caching
+### 10. Unused setup credentials in one-time setup
+- **File:** `src/renderer/pages/SetupPage.jsx`, `src/main/main.js`
+- **Impact:** Setup username and password fields were collected but never actually used for any authentication.
+- **Status:** Removed
 - **Impact:** Subscription check fails without network. No local expiry cache or grace period.
 - **Status:** Not needed
 

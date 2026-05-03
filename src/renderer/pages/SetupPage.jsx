@@ -5,8 +5,6 @@ import OfflineBanner from '@/components/OfflineBanner';
 import useNetworkStatus from '@/hooks/useNetworkStatus';
 
 const initialForm = {
-  setupUsername: '',
-  setupPassword: '',
   supabaseProjectUrl: 'https://cjkbjnazwewpnzypgber.supabase.co',
   supabaseAnonKey: '',
   activationKey: '',
@@ -27,9 +25,9 @@ const initialForm = {
 const STEPS = [
   {
     key: 'setupAccess',
-    title: 'One-Time Setup Access',
-    subtitle: 'Use temporary provisioning credentials and connect to Supabase.',
-    fields: ['setupUsername', 'setupPassword', 'supabaseProjectUrl', 'supabaseAnonKey'],
+    title: 'Supabase Connection',
+    subtitle: 'Connect to your Supabase project.',
+    fields: ['supabaseProjectUrl', 'supabaseAnonKey'],
   },
   {
     key: 'activation',
@@ -84,8 +82,6 @@ export default function SetupPage({ onSetupComplete }) {
       const appIdentity = await ipcService.invoke('get-app-identity').catch(() => null);
       const result = await ipcService.invoke('initialize-app-setup', {
         ...form,
-        setupUsername: form.setupUsername.trim(),
-        setupPassword: form.setupPassword,
         supabaseProjectUrl: form.supabaseProjectUrl.trim(),
         supabaseAnonKey: form.supabaseAnonKey.trim(),
         activationKey: form.activationKey.trim().toUpperCase(),
@@ -109,7 +105,6 @@ export default function SetupPage({ onSetupComplete }) {
 
       if (!result?.success) {
         setError(result?.message || 'Setup failed.');
-        setForm((prev) => ({ ...prev, setupPassword: '' }));
         return;
       }
 
@@ -118,7 +113,6 @@ export default function SetupPage({ onSetupComplete }) {
     } catch (setupError) {
       console.error('Setup failed:', setupError);
       setError('Setup failed. Please try again.');
-      setForm((prev) => ({ ...prev, setupPassword: '' }));
     } finally {
       setSaving(false);
     }
@@ -212,15 +206,7 @@ export default function SetupPage({ onSetupComplete }) {
             </div>
 
             {currentStep.key === 'setupAccess' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs uppercase text-muted mb-1">Setup Username</label>
-                  <input value={form.setupUsername} onChange={(e) => setField('setupUsername', e.target.value)} className="surface-input h-10 w-full rounded-lg px-3" required />
-                </div>
-                <div>
-                  <label className="block text-xs uppercase text-muted mb-1">Setup Password</label>
-                  <input type="password" value={form.setupPassword} onChange={(e) => setField('setupPassword', e.target.value)} className="surface-input h-10 w-full rounded-lg px-3" required />
-                </div>
+              <div className="grid grid-cols-1 gap-3">
                 <div>
                   <label className="block text-xs uppercase text-muted mb-1">Supabase Project URL</label>
                   <input value={form.supabaseProjectUrl} onChange={(e) => setField('supabaseProjectUrl', e.target.value)} className="surface-input h-10 w-full rounded-lg px-3" required />
