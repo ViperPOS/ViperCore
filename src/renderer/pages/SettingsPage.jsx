@@ -660,14 +660,18 @@ function EmployeeManagementTab({ user }) {
 
 function AppControlsTab({ onExitApp }) {
   return (
-    <section className="surface-card rounded-2xl p-5 space-y-4 max-w-lg">
-      <div>
-        <h2 className="text-xl font-black text-on-light">App Controls</h2>
-        <p className="text-sm text-muted mt-1">Close the application directly from settings.</p>
-      </div>
+    <div className="flex justify-center">
+      <section className="surface-card rounded-2xl p-5 space-y-4 max-w-lg">
+        <div>
+          <h2 className="text-xl font-black text-on-light">App Controls</h2>
+          <p className="text-sm text-muted mt-1">Close the application directly from settings.</p>
+        </div>
 
-      <Button type="button" variant="secondary" onClick={onExitApp}>Exit App</Button>
-    </section>
+        <div className="flex justify-center">
+          <Button type="button" variant="secondary" onClick={onExitApp}>Exit App</Button>
+        </div>
+      </section>
+    </div>
   );
 }
 
