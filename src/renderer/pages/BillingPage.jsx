@@ -518,6 +518,8 @@ export default function BillingPage({ user }) {
       kot: billData.kot,
       orderId: billData.orderId,
       dateTime: localDateTimeString(),
+      tableLabel: enableTableSelection ? formatTableLabel(selectedTable) : '',
+      cashierName: user?.name || '',
       retries,
     });
   };
@@ -530,6 +532,8 @@ export default function BillingPage({ user }) {
       totalAmount: billData.amount,
       kot: billData.kot,
       orderId: billData.orderId,
+      tableLabel: enableTableSelection ? formatTableLabel(selectedTable) : '',
+      cashierName: user?.name || '',
       retries,
     });
   };

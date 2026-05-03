@@ -1,4 +1,4 @@
--- AlsPOS initial Supabase schema
+-- ViperCore initial Supabase schema
 -- Run this in the Supabase SQL Editor or via `npx supabase db push`
 
 -- Activation key inventory

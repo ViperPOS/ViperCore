@@ -56,7 +56,7 @@ jobs:
         id: hash
         shell: bash
         run: |
-          SHA256=$(sha256sum "dist/alspos Setup.exe" | awk '{print $1}')
+          SHA256=$(sha256sum "dist/ViperCore Setup.exe" | awk '{print $1}')
           echo "SHA256=$SHA256" >> $GITHUB_OUTPUT
 
       - name: Install TUS client
@@ -67,10 +67,10 @@ jobs:
         shell: bash
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
-          FILE_SIZE=$(stat -c%s "dist/alspos Setup.exe" 2>/dev/null || wc -c < "dist/alspos Setup.exe")
+          FILE_SIZE=$(stat -c%s "dist/ViperCore Setup.exe" 2>/dev/null || wc -c < "dist/ViperCore Setup.exe")
           CHUNK_DIR="dist/chunks"
           mkdir -p "$CHUNK_DIR"
-          split -b 45m --numeric-suffixes --suffix-length=3 "dist/alspos Setup.exe" "${CHUNK_DIR}/chunk-"
+          split -b 45m --numeric-suffixes --suffix-length=3 "dist/ViperCore Setup.exe" "${CHUNK_DIR}/chunk-"
           CHUNK_COUNT=$(ls -1 "${CHUNK_DIR}/chunk-"* | wc -l)
           echo "FILE_SIZE=${FILE_SIZE}" >> $GITHUB_OUTPUT
           echo "CHUNK_COUNT=${CHUNK_COUNT}" >> $GITHUB_OUTPUT
@@ -80,7 +80,7 @@ jobs:
         shell: bash
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
-          STORAGE_PATH="releases/v${VERSION}/alspos-setup-${VERSION}.exe"
+          STORAGE_PATH="releases/v${VERSION}/ViperCore-setup-${VERSION}.exe"
           echo "STORAGE_PATH=${STORAGE_PATH}" >> $GITHUB_ENV
 
           CHUNK_COUNT=${{ steps.chunks.outputs.CHUNK_COUNT }}
@@ -114,7 +114,7 @@ jobs:
               "arch": "x64",
               "channel": "stable",
               "storagePath": "'"${STORAGE_PATH}"'",
-              "fileName": "alspos-setup-'"${VERSION}"'.exe",
+              "fileName": "ViperCore-setup-'"${VERSION}"'.exe",
               "sha256": "'"${{ steps.hash.outputs.SHA256 }}"'",
               "releaseNotes": "'"${{ steps.commit.outputs.MESSAGE }}"'",
               "mandatory": false,
@@ -128,7 +128,7 @@ jobs:
         run: |
           echo "## Release v${{ steps.version.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **File:** alspos-setup-${{ steps.version.outputs.VERSION }}.exe" >> $GITHUB_STEP_SUMMARY
+          echo "- **File:** ViperCore-setup-${{ steps.version.outputs.VERSION }}.exe" >> $GITHUB_STEP_SUMMARY
           echo "- **Size:** ${{ steps.chunks.outputs.FILE_SIZE }} bytes" >> $GITHUB_STEP_SUMMARY
           echo "- **Chunks:** ${{ steps.chunks.outputs.CHUNK_COUNT }}" >> $GITHUB_STEP_SUMMARY
           echo "- **SHA256:** \`${{ steps.hash.outputs.SHA256 }}\`" >> $GITHUB_STEP_SUMMARY

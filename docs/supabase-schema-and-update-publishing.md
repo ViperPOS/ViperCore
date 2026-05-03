@@ -357,7 +357,7 @@ Output should include your Windows installer executable produced by electron-bui
 1. Open Supabase Dashboard.
 2. Go to Storage -> updates bucket.
 3. Upload installer artifact to a deterministic path, for example:
-  - windows/stable/1.0.5/alspos Setup.exe
+  - windows/stable/1.0.5/ViperCore Setup.exe
 4. Keep bucket private.
 
 ## 7.4 Create app_releases Row
@@ -407,8 +407,8 @@ values (
   'x64',
   '1.0.5',
   'updates',
-  'windows/stable/1.0.5/alspos Setup.exe',
-  'alspos Setup.exe',
+  'windows/stable/1.0.5/ViperCore Setup.exe',
+  'ViperCore Setup.exe',
   'Improved updater stability and subscription-gated checks.',
   false,
   100,

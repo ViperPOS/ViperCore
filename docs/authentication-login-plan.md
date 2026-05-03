@@ -1,6 +1,6 @@
 # Authentication and Login Plan
 
-alspos has a login scaffold ready for Supabase-backed authentication, while preserving safe local behavior for development.
+ViperCore has a login scaffold ready for Supabase-backed authentication, while preserving safe local behavior for development.
 
 ## Current state
 

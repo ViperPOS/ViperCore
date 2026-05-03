@@ -1,6 +1,6 @@
 # Codebase Structure
 
-This repository uses a src-first layout for the alspos Electron application.
+This repository uses a src-first layout for the ViperCore Electron application.
 
 ## Folder Layout
 

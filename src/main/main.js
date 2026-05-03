@@ -6,7 +6,7 @@ const dns = require('dns');
 const Database = require('better-sqlite3-multiple-ciphers');
 const fs = require('fs');
 const Store = require('electron-store');
-const printService = require('./services/printService');
+const printService = require('./services/thermalPrinterService');
 const UpdateService = require('./services/updateService');
 const fileManager = require('./fileManager');
 const {
@@ -1538,7 +1538,7 @@ function setupIPC() {
     try {
             const normalized = printService.normalizeConfig(config);
             if (!normalized) {
-                throw new Error('Both Vendor ID and Product ID are required in hex or decimal format');
+                throw new Error('Vendor ID and Product ID are required');
       }
 
             store.set('printerConfig', {
@@ -1568,7 +1568,10 @@ function setupIPC() {
 
     ipcMain.handle('printer:test', async (_event, payload) => {
         const config = payload?.vendorId && payload?.productId
-            ? { vendorId: payload.vendorId, productId: payload.productId }
+            ? {
+                vendorId: payload.vendorId,
+                productId: payload.productId,
+            }
             : null;
         return printService.testPrint(config);
     });
@@ -1957,19 +1960,77 @@ function saveReceiptTemplate(template) {
 ipcMain.handle('load-receipt-template', async () => {
     try {
         const setupRow = await getAppSetupRow();
-        const tenantName = setupRow?.tenant_name || 'ALSPOS';
+        const tenantName = setupRow?.tenant_name || 'ViperCore';
         const tenantLocation = setupRow?.tenant_location || '';
 
         const defaults = {
             title: tenantName,
             subtitle: tenantLocation,
-            footer: 'Thank you for visiting!',
+            contactLine: '',
+            footer: 'Thank you! Visit us again.',
+            tokenPrefix: 'TOKEN',
+            showTable: false,
+            tablePrefix: 'Table',
+            showCashier: false,
+            cashierPrefix: 'Cashier',
             itemHeader: 'ITEM',
             qtyHeader: 'QTY',
-            priceHeader: 'PRICE',
+            priceHeader: 'AMOUNT',
             totalText: 'TOTAL: Rs.',
+            itemNameWidth: 24,
+            itemQtyWidth: 8,
+            itemPriceWidth: 12,
+            showItemNumbers: false,
+            itemNumberPrefix: '#',
+            itemAlign: 'left',
+            qtyAlign: 'right',
+            priceAlign: 'right',
+            headerBold: true,
+            headerAlign: 'left',
+            totalBold: true,
+            totalAlign: 'right',
+            lineChar: '-',
+            bodyTemplate: [
+                '[center][bold]{{title}}',
+                '[center]{{subtitle}}',
+                '[center]{{contactLine}}',
+                '[blank:1]',
+                '[center][bold]{{tokenPrefix}}: {{token}}',
+                '[left]Date: {{dateTime}}',
+                '[left]Bill #: {{billNo}}',
+                '[line]',
+                '{{itemHeaderRow}}',
+                '{{items}}',
+                '[line]',
+                '{{totalLine}}',
+                '[blank:1]',
+                '[center]Please retain bill for returns.',
+                '[center]{{footer}}',
+                '[cut]',
+            ].join('\n'),
+            itemLineTemplate: '{{namePad}}{{qtyPad}}{{amountPad}}',
+            itemHeaderLineTemplate: '{{itemHeaderPad}}{{qtyHeaderPad}}{{priceHeaderPad}}',
+            totalLineTemplate: '{{totalText}} {{total}}',
+            kotTitle: 'KITCHEN ORDER',
+            kotFooter: 'Thank you!',
             kotItemHeader: 'ITEM',
             kotQtyHeader: 'QTY',
+            kotItemWidth: 30,
+            kotQtyWidth: 8,
+            kotBodyTemplate: [
+                '[center][bold]TOKEN: {{token}}',
+                '[left]Time: {{time}}',
+                '[line]',
+                '[bold]{{kotItemHeaderRow}}',
+                '{{kotItems}}',
+                '[line]',
+                '[right][bold]{{kotTotalLine}}',
+                '[center]{{kotFooter}}',
+                '[cut]',
+            ].join('\n'),
+            kotItemLineTemplate: '{{namePad}}{{qtyPad}}',
+            kotItemHeaderLineTemplate: '[bold]{{kotItemHeaderPad}}{{kotQtyHeaderPad}}',
+            kotTotalLineTemplate: 'Total: Rs. {{total}}',
         };
         const raw = fileManager.readFromUserData('receiptFormat.json');
         if (raw) {

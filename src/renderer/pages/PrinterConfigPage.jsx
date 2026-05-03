@@ -268,9 +268,9 @@ export default function PrinterConfig() {
       {error ? <p className="text-sm text-error">{error}</p> : null}
       {message ? <p className="text-sm text-success">{message}</p> : null}
 
-      <div className="flex flex-wrap gap-2">
-        <Button onClick={testPrint} disabled={!usePrinter || testing || saving}>{testing ? 'Testing...' : 'Test Print'}</Button>
-        <Button onClick={save} disabled={!usePrinter || saving || testing} variant="secondary">{saving ? 'Saving...' : 'Save Configuration'}</Button>
+      <div className="flex flex-wrap gap-3">
+        <Button onClick={save} disabled={saving || !usePrinter}>{saving ? 'Saving...' : 'Save Printer Settings'}</Button>
+        <Button onClick={testPrint} disabled={testing || !usePrinter} variant="secondary">{testing ? 'Testing...' : 'Print Test Page'}</Button>
       </div>
     </section>
   );

@@ -73,7 +73,7 @@ export default function LoginPage({ onLogin, loading, error }) {
           className="text-xs uppercase tracking-[0.3em] font-semibold mb-3"
           style={{ color: 'var(--text-on-dark)' }}
         >
-          alspos
+          ViperCore
         </p>
         <h1 className="text-3xl font-black mb-2" style={{ color: 'var(--text-on-dark)' }}>
           Welcome Back

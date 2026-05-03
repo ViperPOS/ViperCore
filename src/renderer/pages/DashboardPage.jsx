@@ -181,7 +181,7 @@ export default function DashboardPage({ user, onLogout }) {
         {/* Brand */}
         <div className="px-6 py-6" style={{ borderBottom: '1px solid var(--border-on-dark)' }}>
           <p className="text-sm font-bold tracking-[0.15em]" style={{ color: 'var(--text-on-dark)' }}>
-            alspos
+            ViperCore
           </p>
           <p className="text-[10px] mt-1" style={{ color: 'var(--text-on-dark)', opacity: 0.4 }}>
             {user?.username ?? 'Staff'}
