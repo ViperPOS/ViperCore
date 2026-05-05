@@ -17,8 +17,6 @@ function verifyRootShims() {
 
   const expectedShims = {
     "main.js": "src/main/main.js",
-    "backup.js": "src/main/backup.js",
-    "restore.js": "src/main/restore.js",
   };
 
   for (const [shimName, target] of Object.entries(expectedShims)) {
@@ -28,9 +26,7 @@ function verifyRootShims() {
       continue;
     }
     const content = fs.readFileSync(shimPath, "utf8").trim();
-    const expectedContent = target === "src/main/main.js"
-      ? `require("./${target}");`
-      : `module.exports = require("./${target}");`;
+    const expectedContent = `require("./${target}");`;
     if (content !== expectedContent) {
       fail(`Root shim ${shimName} has unexpected content. Expected: ${expectedContent}`);
     }
@@ -87,15 +83,15 @@ function verifyReactEntryPoints() {
 }
 
 function verifyViteConfig() {
-  const viteConfigPath = path.join(projectRoot, "vite.config.js");
+  const viteConfigPath = path.join(projectRoot, "vite.config.mjs");
   if (!fs.existsSync(viteConfigPath)) {
-    fail("Missing vite.config.js");
+    fail("Missing vite.config.mjs");
     return;
   }
 
   const content = fs.readFileSync(viteConfigPath, "utf8");
   if (!content.includes("src/renderer")) {
-    fail("vite.config.js does not reference src/renderer as root or entry");
+    fail("vite.config.mjs does not reference src/renderer as root or entry");
   }
 }
 

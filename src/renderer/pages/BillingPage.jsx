@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/dialogs';
+import { useToast } from '@/components/ToastProvider';
 import { RefreshCw, Table } from 'lucide-react';
 import ipcService from '@/services/ipcService';
 
@@ -57,8 +58,6 @@ function TableSelectionModal({
   busy,
   form,
   setForm,
-  error,
-  message,
   onClose,
   onSelect,
   onSave,
@@ -84,9 +83,6 @@ function TableSelectionModal({
             &#x2715;
           </button>
         </div>
-
-        {error ? <p className="text-sm text-error">{error}</p> : null}
-        {message ? <p className="text-sm text-success">{message}</p> : null}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <section className="rounded-xl border border-on-light p-3 space-y-3">
@@ -160,6 +156,7 @@ function TableSelectionModal({
 }
 
 export default function BillingPage({ user }) {
+  const toast = useToast();
   const [categories, setCategories] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('');
   const [menuItems, setMenuItems] = useState([]);
@@ -407,7 +404,7 @@ export default function BillingPage({ user }) {
     try {
       const result = await ipcService.invoke('get-billing-tables');
       if (!result?.success) {
-        setError(result?.message || 'Could not load tables.');
+        toast.error(result?.message || 'Could not load tables.');
         setTables([]);
         return;
       }
@@ -421,7 +418,7 @@ export default function BillingPage({ user }) {
       });
     } catch (err) {
       console.error('Failed to load billing tables:', err);
-      setError('Could not load tables.');
+      toast.error('Could not load tables.');
       setTables([]);
     } finally {
       setTableLoading(false);
@@ -437,8 +434,6 @@ export default function BillingPage({ user }) {
   }, [enableTableSelection]);
 
   const openTableModal = async () => {
-    setTableError('');
-    setTableMessage('');
     setTableModalOpen(true);
     await loadBillingTables();
   };
@@ -446,14 +441,12 @@ export default function BillingPage({ user }) {
   const saveTable = async () => {
     const tableNumber = String(tableForm.tableNumber || '').trim();
     const tableName = String(tableForm.tableName || '').trim();
-    if (!tableNumber || !tableName) {
-      setError('Table name and number are required.');
+    if (!tableNumber) {
+      toast.error('Table number is required.');
       return;
     }
 
     setTableBusy(true);
-    setTableError('');
-    setTableMessage('');
     try {
       const channel = tableForm.tableId ? 'update-billing-table' : 'create-billing-table';
       const payload = tableForm.tableId
@@ -461,17 +454,17 @@ export default function BillingPage({ user }) {
         : { tableName, tableNumber };
       const result = await ipcService.invoke(channel, payload);
       if (!result?.success) {
-        setTableError(result?.message || 'Could not save table.');
+        toast.error(result?.message || 'Could not save table.');
         return;
       }
 
       const wasUpdate = Boolean(tableForm.tableId);
       setTableForm({ tableId: null, tableNumber: '', tableName: '' });
-      setTableMessage(wasUpdate ? 'Table updated.' : 'Table created.');
+      toast.success(wasUpdate ? 'Table updated.' : 'Table created.');
       await loadBillingTables();
     } catch (err) {
       console.error('Failed to save table:', err);
-      setTableError('Could not save table.');
+      toast.error('Could not save table.');
     } finally {
       setTableBusy(false);
     }
@@ -485,12 +478,10 @@ export default function BillingPage({ user }) {
     if (!deleteTableTarget) return;
 
     setTableBusy(true);
-    setTableError('');
-    setTableMessage('');
     try {
       const result = await ipcService.invoke('delete-billing-table', { tableId: deleteTableTarget.tableId });
       if (!result?.success) {
-        setTableError(result?.message || 'Could not delete table.');
+        toast.error(result?.message || 'Could not delete table.');
         return;
       }
 
@@ -498,12 +489,12 @@ export default function BillingPage({ user }) {
         setSelectedTable(null);
       }
 
-      setTableMessage('Table deleted.');
+      toast.success('Table deleted.');
       setDeleteTableTarget(null);
       await loadBillingTables();
     } catch (err) {
       console.error('Failed to delete table:', err);
-      setTableError('Could not delete table.');
+      toast.error('Could not delete table.');
     } finally {
       setTableBusy(false);
     }
@@ -1138,12 +1129,10 @@ export default function BillingPage({ user }) {
         busy={tableBusy}
         form={tableForm}
         setForm={setTableForm}
-        error={tableError}
-        message={tableMessage}
         onClose={() => setTableModalOpen(false)}
         onSelect={(table) => {
           setSelectedTable(table);
-          setMessage(`Selected ${formatTableLabel(table)}.`);
+          toast.success(`Selected ${formatTableLabel(table)}.`);
           setTableModalOpen(false);
         }}
         onSave={saveTable}
@@ -1176,6 +1165,13 @@ export default function BillingPage({ user }) {
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <p className="text-sm font-semibold text-on-light">Bill #{bill.heldid}</p>
+                        <p className="text-xs text-muted mt-1">
+                          Table: {bill.table_label
+                            ? `${bill.table_label}${bill.table_id ? ` (Table ${bill.table_id})` : ''}`
+                            : bill.table_id
+                              ? `Table ${bill.table_id}`
+                              : 'No table selected'}
+                        </p>
                         <p className="text-xs text-muted mt-1">Cashier: {bill.cashier_name || '-'}</p>
                         <p className="text-xs text-muted">Items: {bill.food_items || '-'}</p>
                         <p className="text-sm font-medium text-on-light mt-1">{formatCurrency(bill.price)}</p>

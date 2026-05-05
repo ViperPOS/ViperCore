@@ -36,43 +36,6 @@ export const THEME_PRESETS = {
     '--status-success': '#262424',
     '--status-warning': '#6B6B6B',
   },
-  classicMono: {
-    '--color-a': '#000000',
-    '--color-b': '#111111',
-    '--color-c': '#6B6B6B',
-    '--color-d': '#FFFFFF',
-    '--color-e': '#E6E6E6',
-    '--bg-app': '#FFFFFF',
-    '--bg-sidebar': '#000000',
-    '--bg-card': '#FFFFFF',
-    '--bg-input': '#FFFFFF',
-    '--bg-hover': 'rgba(0, 0, 0, 0.06)',
-    '--bg-active': 'rgba(0, 0, 0, 0.12)',
-    '--text-on-dark': '#FFFFFF',
-    '--text-on-light': '#000000',
-    '--text-muted': '#6B6B6B',
-    '--border-on-dark': 'rgba(255, 255, 255, 0.28)',
-    '--border-on-light': '#000000',
-    '--border-subtle': 'rgba(0, 0, 0, 0.14)',
-    '--btn-primary-bg': '#000000',
-    '--btn-primary-text': '#FFFFFF',
-    '--btn-primary-hover': '#111111',
-    '--btn-secondary-bg': '#FFFFFF',
-    '--btn-secondary-text': '#000000',
-    '--btn-secondary-border': '#000000',
-    '--btn-secondary-hover': '#E6E6E6',
-    '--btn-ghost-bg': 'transparent',
-    '--btn-ghost-text': '#000000',
-    '--btn-ghost-border': '#000000',
-    '--btn-ghost-hover': '#E6E6E6',
-    '--btn-ghost-dark-bg': 'transparent',
-    '--btn-ghost-dark-text': '#FFFFFF',
-    '--btn-ghost-dark-border': 'rgba(255, 255, 255, 0.28)',
-    '--btn-ghost-dark-hover': 'rgba(255, 255, 255, 0.12)',
-    '--status-error': '#000000',
-    '--status-success': '#000000',
-    '--status-warning': '#6B6B6B',
-  },
   navySunburst: {
     '--color-a': '#0A122A',
     '--color-b': '#111111',
@@ -147,54 +110,11 @@ export const THEME_PRESETS = {
     '--status-success': '#004643',
     '--status-warning': '#6B6B6B',
   },
-  mintRose: {
-    '--color-a': '#C54B8C',
-    '--color-b': '#9A3A6D',
-    '--color-c': '#6B6B6B',
-    '--color-d': '#F0FFF0',
-    '--color-e': '#E6E6E6',
-    '--bg-app': '#F0FFF0',
-    '--bg-sidebar': '#C54B8C',
-    '--bg-card': '#F0FFF0',
-    '--bg-input': '#F0FFF0',
-    '--bg-hover': 'rgba(197, 75, 140, 0.08)',
-    '--bg-active': 'rgba(197, 75, 140, 0.16)',
-    '--text-on-dark': '#F0FFF0',
-    '--text-on-light': '#C54B8C',
-    '--text-muted': '#6B6B6B',
-    '--border-on-dark': 'rgba(240, 255, 240, 0.32)',
-    '--border-on-light': '#C54B8C',
-    '--border-subtle': 'rgba(197, 75, 140, 0.16)',
-    '--btn-primary-bg': '#C54B8C',
-    '--btn-primary-text': '#F0FFF0',
-    '--btn-primary-hover': '#9D6666',
-    '--btn-secondary-bg': '#F0FFF0',
-    '--btn-secondary-text': '#C54B8C',
-    '--btn-secondary-border': '#C54B8C',
-    '--btn-secondary-hover': '#E9F7E9',
-    '--btn-ghost-bg': 'transparent',
-    '--btn-ghost-text': '#C54B8C',
-    '--btn-ghost-border': '#C54B8C',
-    '--btn-ghost-hover': 'rgba(197, 75, 140, 0.08)',
-    '--btn-ghost-dark-bg': 'transparent',
-    '--btn-ghost-dark-text': '#F0FFF0',
-    '--btn-ghost-dark-border': 'rgba(240, 255, 240, 0.32)',
-    '--btn-ghost-dark-hover': 'rgba(240, 255, 240, 0.12)',
-    '--status-error': '#C54B8C',
-    '--status-success': '#C54B8C',
-    '--status-warning': '#6B6B6B',
-  },
 };
 
 export function resolveThemePreset(themePreset) {
-  if (themePreset === 'classicMono') {
-    return 'classicMono';
-  }
   if (themePreset === 'forestCream') {
     return 'forestCream';
-  }
-  if (themePreset === 'mintRose') {
-    return 'mintRose';
   }
   if (themePreset === 'navySunburst') {
     return 'navySunburst';

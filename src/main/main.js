@@ -2,7 +2,6 @@ const { app, BrowserWindow, Menu, ipcMain, dialog } = require("electron");
 const path = require("path");
 const url = require("url");
 const crypto = require('crypto');
-const dns = require('dns');
 const Database = require('better-sqlite3-multiple-ciphers');
 const fs = require('fs');
 const Store = require('electron-store');
@@ -39,19 +38,25 @@ const projectRoot = app.isPackaged ? process.resourcesPath : path.resolve(__dirn
 
 function checkNetworkConnectivity(timeoutMs = 3000) {
     return new Promise((resolve) => {
-        dns.resolve('dns.google', (err) => {
-            resolve(!err);
-        });
-        setTimeout(() => resolve(false), timeoutMs);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+        fetch('https://www.gstatic.com/generate_204', {
+            method: 'GET',
+            signal: controller.signal,
+        })
+            .then((response) => {
+                resolve(response.ok || response.status === 204);
+            })
+            .catch(() => resolve(false))
+            .finally(() => clearTimeout(timeoutId));
     });
 }
 
 const DEFAULT_SUPABASE_PROJECT_URL = 'https://cjkbjnazwewpnzypgber.supabase.co';
 const VALID_THEME_PRESETS = new Set([
-    'classicMono',
     'navySunburst',
     'forestCream',
-    'mintRose',
 ]);
 
 function normalizeThemePreset(themePreset, fallback = 'creamCharcoal') {
@@ -435,11 +440,44 @@ async function ensureCategorySchema() {
 async function ensureBillingTableSchema() {
     await dbRunAsync(`CREATE TABLE IF NOT EXISTS DiningTable (
         table_id INTEGER PRIMARY KEY AUTOINCREMENT,
-        table_name TEXT NOT NULL,
+        table_name TEXT,
         table_number TEXT NOT NULL UNIQUE,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`);
+
+    const diningCols = await dbAllAsync('PRAGMA table_info(DiningTable)');
+    const tableNameColumn = diningCols.find((col) => col.name === 'table_name');
+    if (tableNameColumn && Number(tableNameColumn.notnull) === 1) {
+        await dbRunAsync('PRAGMA foreign_keys = OFF');
+        await dbRunAsync('BEGIN TRANSACTION');
+        try {
+            await dbRunAsync(`
+                ALTER TABLE DiningTable RENAME TO DiningTable_old
+            `);
+            await dbRunAsync(`
+                CREATE TABLE DiningTable (
+                    table_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    table_name TEXT,
+                    table_number TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            `);
+            await dbRunAsync(`
+                INSERT INTO DiningTable (table_id, table_name, table_number, created_at, updated_at)
+                SELECT table_id, NULLIF(TRIM(table_name), ''), table_number, created_at, updated_at
+                FROM DiningTable_old
+            `);
+            await dbRunAsync('DROP TABLE DiningTable_old');
+            await dbRunAsync('COMMIT');
+        } catch (error) {
+            try { await dbRunAsync('ROLLBACK'); } catch (_) {}
+            throw error;
+        } finally {
+            await dbRunAsync('PRAGMA foreign_keys = ON');
+        }
+    }
 
     const orderCols = await dbAllAsync('PRAGMA table_info(Orders)');
     const hasOrderTableId = orderCols.some((col) => col.name === 'table_id');
@@ -484,7 +522,7 @@ async function ensureBillingTableSchema() {
             await dbRunAsync(
                 `INSERT INTO DiningTable (table_name, table_number, updated_at)
                  VALUES (?, ?, datetime('now'))`,
-                [`Table ${index}`, String(index)]
+                [null, String(index)]
             );
         }
     }
@@ -585,6 +623,32 @@ async function isAppInitialized() {
     return Number(row?.is_initialized || 0) === 1;
 }
 
+async function ensureAppInstanceId() {
+    const storedAppInstanceId = String(store.get('appInstanceId') || '').trim();
+    if (storedAppInstanceId) {
+        return storedAppInstanceId;
+    }
+
+    const setupRow = await getAppSetupRow();
+    const dbAppInstanceId = String(setupRow?.app_instance_id || '').trim();
+    if (dbAppInstanceId) {
+        store.set('appInstanceId', dbAppInstanceId);
+        return dbAppInstanceId;
+    }
+
+    const generatedAppInstanceId = crypto.randomUUID();
+    store.set('appInstanceId', generatedAppInstanceId);
+
+    if (setupRow && Number(setupRow?.is_initialized || 0) === 1) {
+        await dbRunAsync(
+            'UPDATE AppSetup SET app_instance_id = ?, updated_at = datetime(\'now\') WHERE id = 1',
+            [generatedAppInstanceId]
+        );
+    }
+
+    return generatedAppInstanceId;
+}
+
 function getRemoteAuthConfig(setupRow) {
     const projectUrl = String(setupRow?.remote_project_url || DEFAULT_SUPABASE_PROJECT_URL || '').trim();
     const anonKey = String(setupRow?.remote_anon_key || '').trim();
@@ -603,11 +667,6 @@ function getRemoteAuthConfig(setupRow) {
 async function callRemoteAuthFunction(remoteConfig, slug, payload) {
     if (!remoteConfig?.functionsBaseUrl || !remoteConfig?.anonKey) {
         throw new Error('Remote auth configuration is missing.');
-    }
-
-    const online = await checkNetworkConnectivity();
-    if (!online) {
-        throw new Error('No internet connection. Please check your WiFi or network and try again.');
     }
 
     const controller = new AbortController();
@@ -842,8 +901,8 @@ function setupIPC() {
         const updateService = new UpdateService({
             getSetupRow: getAppSetupRow,
             getRemoteAuthConfig,
-            getAppIdentity: () => ({
-                appInstanceId: String(store.get('appInstanceId') || '').trim(),
+            getAppIdentity: async () => ({
+                appInstanceId: await ensureAppInstanceId(),
                 appVersion: app.getVersion(),
                 platform: process.platform,
                 arch: process.arch,
@@ -888,9 +947,9 @@ function setupIPC() {
     return store.get("sessionUser") || null;
   });
 
-    ipcMain.handle('get-app-identity', () => {
+        ipcMain.handle('get-app-identity', async () => {
             return {
-                    appInstanceId: String(store.get('appInstanceId') || '').trim(),
+                appInstanceId: await ensureAppInstanceId(),
                     appVersion: app.getVersion(),
                     platform: process.platform,
                     arch: process.arch,
@@ -932,7 +991,7 @@ function setupIPC() {
 
             const supabaseProjectUrl = String(payload?.supabaseProjectUrl || DEFAULT_SUPABASE_PROJECT_URL).trim();
             const supabaseAnonKey = String(payload?.supabaseAnonKey || '').trim();
-            const appInstanceId = String(payload?.appInstanceId || store.get('appInstanceId') || crypto.randomUUID()).trim();
+            const appInstanceId = crypto.randomUUID();
             const appVersion = String(payload?.appVersion || app.getVersion()).trim();
             const platform = String(payload?.platform || process.platform).trim();
             const arch = String(payload?.arch || process.arch).trim();
@@ -1119,7 +1178,7 @@ function setupIPC() {
                 return { success: false, message: 'Supabase configuration is missing.' };
             }
 
-            const appInstanceId = String(store.get('appInstanceId') || '').trim();
+            const appInstanceId = await ensureAppInstanceId();
             return await callRemoteAuthFunction(remoteConfig, 'subscription-status', {
                 tenantId: String(setupRow.tenant_id || '').trim(),
                 appInstanceId,
@@ -1194,6 +1253,91 @@ function setupIPC() {
       }
       
       return false;
+    }
+  });
+
+  // IPC handler for admin password recovery via master PIN
+  ipcMain.handle("admin-recover-password", async (event, payload) => {
+    try {
+      const setupRow = await getAppSetupRow();
+      if (!setupRow || Number(setupRow?.is_initialized || 0) !== 1) {
+        return { success: false, message: 'Application not initialized. Please complete setup first.' };
+      }
+
+      const remoteConfig = getRemoteAuthConfig(setupRow);
+      if (!remoteConfig) {
+        return { success: false, message: 'Application not configured. Please contact support.' };
+      }
+
+      const tenantId = String(setupRow?.tenant_id || '').trim();
+      const adminUsername = String(payload?.adminUsername || '').trim().toLowerCase();
+      const masterPin = String(payload?.masterPin || '').trim();
+      const newPassword = String(payload?.newPassword || '');
+
+      if (!adminUsername || !masterPin || !newPassword) {
+        return { success: false, message: 'All fields are required.' };
+      }
+
+      if (newPassword.length < 6) {
+        return { success: false, message: 'New password must be at least 6 characters.' };
+      }
+
+            const localAdmin = await dbGetAsync(
+                'SELECT userid FROM User WHERE LOWER(username) = LOWER(?) AND is_admin = 1 AND active = 1 LIMIT 1',
+                [adminUsername]
+            );
+
+            if (!localAdmin) {
+                return { success: false, message: 'Local admin account not found on this device.' };
+            }
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+            const passwordHash = hashSecret(newPassword);
+
+      try {
+        const response = await fetch(`${remoteConfig.functionsBaseUrl}/admin-reset-password-self`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${remoteConfig.anonKey}`,
+            'apikey': remoteConfig.anonKey,
+          },
+          body: JSON.stringify({
+            tenantId,
+            adminUsername,
+            masterPin,
+            newPassword,
+          }),
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+        const data = await response.json();
+
+        if (!response.ok) {
+          return {
+            success: false,
+            message: data.message || 'Failed to recover password.',
+          };
+        }
+
+                await dbRunAsync('UPDATE User SET password_hash = ? WHERE userid = ?', [passwordHash, localAdmin.userid]);
+
+        return { success: true, message: data.message || 'Password recovered successfully.' };
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        if (fetchError.name === 'AbortError') {
+          throw new Error('Request timeout. Please check your internet connection.');
+        }
+        throw fetchError;
+      }
+    } catch (error) {
+      console.error('Admin password recovery error:', error);
+      const errorMessage = error?.message?.includes('fetch') || error?.message?.includes('ERR_')
+        ? 'Unable to connect to server. Please check your internet connection.'
+        : 'Failed to recover password. Please try again.';
+      return { success: false, message: errorMessage };
     }
   });
 
@@ -1395,6 +1539,78 @@ function setupIPC() {
         }
   });
 
+    ipcMain.handle('get-all-employees', async () => {
+        try {
+            await ensureAdminSession();
+            const rows = await dbAllAsync(
+                `SELECT userid, uname, username, is_admin
+                 FROM User
+                 ORDER BY is_admin DESC, uname ASC`
+            );
+
+            return {
+                success: true,
+                employees: rows.map((row) => ({
+                    userid: row.userid,
+                    uname: row.uname,
+                    username: row.username,
+                    isAdmin: Number(row.is_admin || 0) === 1,
+                })),
+            };
+        } catch (error) {
+            console.error('Get all employees error:', error);
+            return { success: false, message: error.message || 'Failed to fetch employees.', employees: [] };
+        }
+    });
+
+    ipcMain.handle('admin-reset-employee-password', async (event, payload) => {
+        try {
+            await ensureAdminSession();
+
+            const targetUserid = Number(payload?.targetUserid);
+            const newPassword = String(payload?.newPassword || '');
+
+            if (!targetUserid || newPassword.length < 6) {
+                return { success: false, message: 'Valid target user and password (min 6 chars) are required.' };
+            }
+
+            const targetUser = await dbGetAsync('SELECT userid FROM User WHERE userid = ? LIMIT 1', [targetUserid]);
+            if (!targetUser) {
+                return { success: false, message: 'Target user not found.' };
+            }
+
+            await dbRunAsync('UPDATE User SET password_hash = ? WHERE userid = ?', [hashSecret(newPassword), targetUserid]);
+            return { success: true, message: 'Employee password reset successfully.' };
+        } catch (error) {
+            console.error('Admin reset employee password error:', error);
+            return { success: false, message: error.message || 'Failed to reset employee password.' };
+        }
+    });
+
+    ipcMain.handle('admin-reset-employee-pin', async (event, payload) => {
+        try {
+            await ensureAdminSession();
+
+            const targetUserid = Number(payload?.targetUserid);
+            const newPin = String(payload?.newPin || '').trim();
+
+            if (!targetUserid || !isValidPin(newPin)) {
+                return { success: false, message: 'Valid target user and PIN (4-8 digits) are required.' };
+            }
+
+            const targetUser = await dbGetAsync('SELECT userid FROM User WHERE userid = ? LIMIT 1', [targetUserid]);
+            if (!targetUser) {
+                return { success: false, message: 'Target user not found.' };
+            }
+
+            await dbRunAsync('UPDATE User SET pin_hash = ? WHERE userid = ?', [hashSecret(newPin), targetUserid]);
+            return { success: true, message: 'Employee PIN reset successfully.' };
+        } catch (error) {
+            console.error('Admin reset employee pin error:', error);
+            return { success: false, message: error.message || 'Failed to reset employee PIN.' };
+        }
+    });
+
     ipcMain.handle('edit-employee', async (event, payload) => {
         try {
             const sessionUser = await ensureAdminSession();
@@ -1533,6 +1749,127 @@ function setupIPC() {
         return printService.testPrint(config);
     });
 
+    ipcMain.handle('verify-current-password', async (event, payload) => {
+        try {
+            const sessionUser = store.get('sessionUser');
+            if (!sessionUser?.userid) {
+                return { success: false, message: 'No active session found.' };
+            }
+
+            const userid = Number(payload?.userid);
+            const currentPassword = String(payload?.currentPassword || '');
+
+            if (Number(sessionUser.userid) !== userid) {
+                return { success: false, message: 'Not allowed to verify this password.' };
+            }
+
+            const user = await dbGetAsync('SELECT password_hash FROM User WHERE userid = ? LIMIT 1', [userid]);
+            if (!user || !compareSecret(currentPassword, user.password_hash)) {
+                return { success: false, message: 'Current password is incorrect.' };
+            }
+
+            return { success: true };
+        } catch (error) {
+            console.error('Verify current password error:', error);
+            return { success: false, message: 'Failed to verify password.' };
+        }
+    });
+
+    ipcMain.handle('verify-current-pin', async (event, payload) => {
+        try {
+            const sessionUser = store.get('sessionUser');
+            if (!sessionUser?.userid) {
+                return { success: false, message: 'No active session found.' };
+            }
+
+            const userid = Number(payload?.userid);
+            const currentPin = String(payload?.currentPin || '');
+
+            if (Number(sessionUser.userid) !== userid) {
+                return { success: false, message: 'Not allowed to verify this PIN.' };
+            }
+
+            const user = await dbGetAsync('SELECT pin_hash FROM User WHERE userid = ? LIMIT 1', [userid]);
+            if (!user || !user.pin_hash || !compareSecret(currentPin, user.pin_hash)) {
+                return { success: false, message: 'Current PIN is incorrect.' };
+            }
+
+            return { success: true };
+        } catch (error) {
+            console.error('Verify current PIN error:', error);
+            return { success: false, message: 'Failed to verify PIN.' };
+        }
+    });
+
+    ipcMain.handle('verify-master-pin', async (event, payload) => {
+        try {
+            const masterPin = String(payload?.masterPin || '').trim();
+
+            if (!isValidPin(masterPin)) {
+                return { success: false, message: 'Master PIN must be 4 to 8 digits.' };
+            }
+
+            const row = await dbGetAsync('SELECT master_pin_hash FROM AppSetup WHERE id = 1 LIMIT 1');
+            if (!row || !row.master_pin_hash || !compareSecret(masterPin, row.master_pin_hash)) {
+                return { success: false, message: 'Master PIN is incorrect.' };
+            }
+
+            return { success: true };
+        } catch (error) {
+            console.error('Verify master PIN error:', error);
+            return { success: false, message: 'Failed to verify master PIN.' };
+        }
+    });
+
+    ipcMain.handle('verify-admin-username', async (event, payload) => {
+        try {
+            const username = String(payload?.username || '').trim().toLowerCase();
+
+            if (!username) {
+                return { success: false, message: 'Admin username is required.' };
+            }
+
+            const row = await dbGetAsync(
+                'SELECT userid FROM User WHERE LOWER(username) = LOWER(?) AND is_admin = 1 LIMIT 1',
+                [username]
+            );
+
+            if (!row) {
+                return { success: false, message: 'Admin username not found.' };
+            }
+
+            return { success: true };
+        } catch (error) {
+            console.error('Verify admin username error:', error);
+            return { success: false, message: 'Failed to verify admin username.' };
+        }
+    });
+
+    ipcMain.handle('check-employee-username-available', async (event, payload) => {
+        try {
+            await ensureAdminSession();
+
+            const username = String(payload?.username || '').trim().toLowerCase();
+            if (!username) {
+                return { success: false, message: 'Username is required.' };
+            }
+
+            const existing = await dbGetAsync(
+                'SELECT userid FROM User WHERE LOWER(username) = LOWER(?) LIMIT 1',
+                [username]
+            );
+
+            if (existing) {
+                return { success: false, available: false, message: 'Username already exists.' };
+            }
+
+            return { success: true, available: true };
+        } catch (error) {
+            console.error('Check employee username availability error:', error);
+            return { success: false, available: false, message: 'Failed to check username availability.' };
+        }
+    });
+
     ipcMain.handle('printer:print-bill', async (_event, payload) => {
         const retries = Number(payload?.retries ?? 2);
         return printService.safePrint('bill', payload, retries);
@@ -1558,6 +1895,7 @@ app.whenReady().then(async () => {
   try {
     await runStartupTasks();
         await initializeDatabaseConnection();
+                await ensureAppInstanceId();
     createMainWindow();
     setupIPC();
   } catch (err) {
@@ -2023,6 +2361,8 @@ ipcMain.on('get-held-orders', (event) => {
                 HeldOrders.cgst, 
                 HeldOrders.tax, 
                 HeldOrders.date,
+                HeldOrders.table_id,
+                HeldOrders.table_label,
                 GROUP_CONCAT(FoodItem.fname || ' (x' || HeldOrderDetails.quantity || ')', ', ') AS food_items
             FROM HeldOrders
             JOIN User ON HeldOrders.cashier = User.userid
@@ -3053,11 +3393,11 @@ ipcMain.handle('get-billing-tables', async () => {
 
 ipcMain.handle('create-billing-table', async (event, payload) => {
     try {
-        const tableName = String(payload?.tableName || '').trim();
         const tableNumber = String(payload?.tableNumber || '').trim();
+        const tableName = String(payload?.tableName || '').trim();
 
-        if (!tableName || !tableNumber) {
-            return { success: false, message: 'Table name and number are required.' };
+        if (!tableNumber) {
+            return { success: false, message: 'Table number is required.' };
         }
 
         const duplicate = await dbGetAsync(
@@ -3071,7 +3411,7 @@ ipcMain.handle('create-billing-table', async (event, payload) => {
         await dbRunAsync(
             `INSERT INTO DiningTable (table_name, table_number, updated_at)
              VALUES (?, ?, datetime('now'))`,
-            [tableName, tableNumber]
+            [tableName || null, tableNumber]
         );
 
         return { success: true };
@@ -3084,11 +3424,11 @@ ipcMain.handle('create-billing-table', async (event, payload) => {
 ipcMain.handle('update-billing-table', async (event, payload) => {
     try {
         const tableId = Number(payload?.tableId);
-        const tableName = String(payload?.tableName || '').trim();
         const tableNumber = String(payload?.tableNumber || '').trim();
+        const tableName = String(payload?.tableName || '').trim();
 
-        if (!tableId || !tableName || !tableNumber) {
-            return { success: false, message: 'Valid table id, name, and number are required.' };
+        if (!tableId || !tableNumber) {
+            return { success: false, message: 'Valid table id and table number are required.' };
         }
 
         const duplicate = await dbGetAsync(
@@ -3105,7 +3445,7 @@ ipcMain.handle('update-billing-table', async (event, payload) => {
             `UPDATE DiningTable
              SET table_name = ?, table_number = ?, updated_at = datetime('now')
              WHERE table_id = ?`,
-            [tableName, tableNumber, tableId]
+            [tableName || null, tableNumber, tableId]
         );
 
         return { success: true };

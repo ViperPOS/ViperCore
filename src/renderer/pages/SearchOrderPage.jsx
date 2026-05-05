@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import DateField from '@/components/DateField';
 import ipcService from '@/services/ipcService';
 import { useSortableData } from '@/hooks/useSortableData';
+import { parseDateInput } from '@/lib/date';
 
 function SortHeader({ label, sortKey, sortConfig, onSort }) {
   const active = sortConfig.key === sortKey;
@@ -62,13 +64,21 @@ export default function SearchOrderPage() {
     setLoading(true);
     setError('');
     try {
+      const startDate = parseDateInput(filters.startDate);
+      const endDate = parseDateInput(filters.endDate);
+      if ((filters.startDate && !startDate) || (filters.endDate && !endDate)) {
+        setError('Use DD-MM-YYYY for both dates.');
+        setOrders([]);
+        return;
+      }
+
       const result = await ipcService.requestReply('search-orders', 'search-orders-response', {
         billNoFrom: filters.billNoFrom || undefined,
         billNoTo: filters.billNoTo || undefined,
         kotFrom: filters.kotFrom || undefined,
         kotTo: filters.kotTo || undefined,
-        startDate: filters.startDate || undefined,
-        endDate: filters.endDate || undefined,
+        startDate: startDate || undefined,
+        endDate: endDate || undefined,
         cashier: filters.cashier || undefined,
         minPrice: filters.minPrice || undefined,
         maxPrice: filters.maxPrice || undefined,
@@ -90,64 +100,64 @@ export default function SearchOrderPage() {
 
   return (
     <div className="space-y-4">
-      <section className="surface-card rounded-2xl p-4 md:p-5 space-y-3">
-        <div>
+      <section className="surface-card rounded-2xl p-4 md:p-5 space-y-4">
+        <div className="space-y-1">
           <h2 className="text-xl font-black text-on-light">Search Orders</h2>
           <p className="text-sm text-muted">Filter orders by bill number, date, cashier, or price range.</p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <div>
-            <label className="block text-xs uppercase text-muted mb-1">Bill No From</label>
-            <input value={filters.billNoFrom} onChange={(e) => set('billNoFrom', e.target.value)} className="surface-input h-10 w-full rounded-lg px-3" />
-          </div>
-          <div>
-            <label className="block text-xs uppercase text-muted mb-1">Bill No To</label>
-            <input value={filters.billNoTo} onChange={(e) => set('billNoTo', e.target.value)} className="surface-input h-10 w-full rounded-lg px-3" />
-          </div>
-          <div>
-            <label className="block text-xs uppercase text-muted mb-1">KOT From</label>
-            <input value={filters.kotFrom} onChange={(e) => set('kotFrom', e.target.value)} className="surface-input h-10 w-full rounded-lg px-3" />
-          </div>
-          <div>
-            <label className="block text-xs uppercase text-muted mb-1">KOT To</label>
-            <input value={filters.kotTo} onChange={(e) => set('kotTo', e.target.value)} className="surface-input h-10 w-full rounded-lg px-3" />
-          </div>
-          <div>
-            <label className="block text-xs uppercase text-muted mb-1">Start Date</label>
-            <input type="date" lang="en-GB" value={filters.startDate} onChange={(e) => set('startDate', e.target.value)} className="surface-input h-10 w-full rounded-lg px-3" />
-          </div>
-          <div>
-            <label className="block text-xs uppercase text-muted mb-1">End Date</label>
-            <input type="date" lang="en-GB" value={filters.endDate} onChange={(e) => set('endDate', e.target.value)} className="surface-input h-10 w-full rounded-lg px-3" />
-          </div>
-          <div>
-            <label className="block text-xs uppercase text-muted mb-1">Cashier</label>
-            <select value={filters.cashier} onChange={(e) => set('cashier', e.target.value)} className="surface-input h-10 w-full rounded-lg px-3">
-              <option value="">All Cashiers</option>
-              {cashiers.map((c) => (
-                <option key={c.userid} value={c.userid}>{c.uname}</option>
-              ))}
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_18rem] xl:items-end">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div>
-              <label className="block text-xs uppercase text-muted mb-1">Min Price</label>
-              <input type="number" min="0" value={filters.minPrice} onChange={(e) => set('minPrice', e.target.value)} className="surface-input h-10 w-full rounded-lg px-3" />
+              <label className="block text-xs uppercase text-muted mb-1">Bill No From</label>
+              <input value={filters.billNoFrom} onChange={(e) => set('billNoFrom', e.target.value)} className="surface-input h-11 w-full rounded-lg px-3" />
             </div>
             <div>
-              <label className="block text-xs uppercase text-muted mb-1">Max Price</label>
-              <input type="number" min="0" value={filters.maxPrice} onChange={(e) => set('maxPrice', e.target.value)} className="surface-input h-10 w-full rounded-lg px-3" />
+              <label className="block text-xs uppercase text-muted mb-1">Bill No To</label>
+              <input value={filters.billNoTo} onChange={(e) => set('billNoTo', e.target.value)} className="surface-input h-11 w-full rounded-lg px-3" />
+            </div>
+            <div>
+              <label className="block text-xs uppercase text-muted mb-1">KOT From</label>
+              <input value={filters.kotFrom} onChange={(e) => set('kotFrom', e.target.value)} className="surface-input h-11 w-full rounded-lg px-3" />
+            </div>
+            <div>
+              <label className="block text-xs uppercase text-muted mb-1">KOT To</label>
+              <input value={filters.kotTo} onChange={(e) => set('kotTo', e.target.value)} className="surface-input h-11 w-full rounded-lg px-3" />
+            </div>
+            <div>
+              <DateField label="Start Date" value={filters.startDate} onChange={(e) => set('startDate', e.target.value)} />
+            </div>
+            <div>
+              <DateField label="End Date" value={filters.endDate} onChange={(e) => set('endDate', e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-xs uppercase text-muted mb-1">Cashier</label>
+              <select value={filters.cashier} onChange={(e) => set('cashier', e.target.value)} className="surface-input h-11 w-full rounded-lg px-3">
+                <option value="">All Cashiers</option>
+                {cashiers.map((c) => (
+                  <option key={c.userid} value={c.userid}>{c.uname}</option>
+                ))}
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs uppercase text-muted mb-1">Min Price</label>
+                <input type="number" min="0" value={filters.minPrice} onChange={(e) => set('minPrice', e.target.value)} className="surface-input h-11 w-full rounded-lg px-3" />
+              </div>
+              <div>
+                <label className="block text-xs uppercase text-muted mb-1">Max Price</label>
+                <input type="number" min="0" value={filters.maxPrice} onChange={(e) => set('maxPrice', e.target.value)} className="surface-input h-11 w-full rounded-lg px-3" />
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="flex gap-2">
-          <Button onClick={search} disabled={loading}>{loading ? 'Searching...' : 'Search'}</Button>
-          <Button variant="secondary" onClick={() => {
-            setFilters({ billNoFrom: '', billNoTo: '', kotFrom: '', kotTo: '', startDate: '', endDate: '', cashier: '', minPrice: '', maxPrice: '' });
-            setOrders([]);
-          }}>Clear</Button>
+          <div className="flex flex-col gap-2">
+            <Button className="w-full justify-center" onClick={search} disabled={loading}>{loading ? 'Searching...' : 'Search'}</Button>
+            <Button className="w-full justify-center" variant="secondary" onClick={() => {
+              setFilters({ billNoFrom: '', billNoTo: '', kotFrom: '', kotTo: '', startDate: '', endDate: '', cashier: '', minPrice: '', maxPrice: '' });
+              setOrders([]);
+            }}>Clear</Button>
+          </div>
         </div>
       </section>
 

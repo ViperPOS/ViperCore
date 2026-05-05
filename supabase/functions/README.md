@@ -15,6 +15,11 @@ This folder contains Edge Functions for the setup/login flow.
   - Authenticated admin action to add employee with password+PIN
 - `admin-reset-pin`
   - Authenticated admin action to reset an employee PIN
+- `admin-reset-password`
+  - Authenticated admin action to reset an employee password
+- `admin-reset-password-self`
+  - Admin password recovery using master PIN if forgotten
+  - Requires tenant ID, admin username, and master PIN verification
 - `check-update`
   - Validates tenant, subscription, and registered installation
   - Returns signed download URL for the latest approved installer
@@ -37,6 +42,8 @@ npx supabase functions deploy initialize-tenant
 npx supabase functions deploy login
 npx supabase functions deploy admin-add-employee
 npx supabase functions deploy admin-reset-pin
+npx supabase functions deploy admin-reset-password
+npx supabase functions deploy admin-reset-password-self
 npx supabase functions deploy check-update
 npx supabase functions deploy subscription-status
 ```

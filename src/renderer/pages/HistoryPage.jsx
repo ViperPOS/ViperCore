@@ -1,14 +1,13 @@
 import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { PromptDialog } from '@/components/ui/dialogs';
+import DateField from '@/components/DateField';
 import ipcService from '@/services/ipcService';
 import { HistoryTable } from '@/components/DataTable';
+import { formatDateForDisplay, parseDateInput } from '@/lib/date';
 
 function toDateInputValue(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return formatDateForDisplay(date);
 }
 
 export default function HistoryPage() {
@@ -23,12 +22,20 @@ export default function HistoryPage() {
   const [busy, setBusy] = useState(false);
 
   const fetchHistory = async () => {
-    if (!startDate || !endDate) {
-      setError('Start date and end date are required.');
+    const startIso = parseDateInput(startDate);
+    const endIso = parseDateInput(endDate);
+
+    if (!startIso || !endIso) {
+      setError('Use DD-MM-YYYY for both dates.');
       return;
     }
-    if (startDate > endDate) {
+    if (startIso > endIso) {
       setError('End date cannot be earlier than start date.');
+      return;
+    }
+
+    if (!startDate || !endDate) {
+      setError('Start date and end date are required.');
       return;
     }
 
@@ -36,8 +43,8 @@ export default function HistoryPage() {
     setError('');
     try {
       const result = await ipcService.requestReply('get-order-history', 'order-history-response', {
-        startDate,
-        endDate,
+        startDate: startIso,
+        endDate: endIso,
       });
       setOrders(Array.isArray(result?.orders) ? result.orders : []);
     } catch (fetchError) {
@@ -88,42 +95,34 @@ export default function HistoryPage() {
 
   return (
     <div className="space-y-4">
-      <section className="surface-card rounded-2xl p-4 md:p-5">
-        <div className="flex flex-wrap items-end gap-3">
-          <div>
-            <label className="block text-xs uppercase tracking-[0.15em] text-muted mb-1">Start Date</label>
-            <input
-              type="date"
-              lang="en-GB"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="surface-input h-10 rounded-lg px-3"
-            />
+      <section className="surface-card rounded-2xl p-4 md:p-5 space-y-4">
+        <div className="space-y-1">
+          <h2 className="text-xl font-black text-on-light">Order History</h2>
+          <p className="text-sm text-muted">Review past orders by date range and remove records when needed.</p>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-end">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <DateField label="Start Date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            <DateField label="End Date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
           </div>
-          <div>
-            <label className="block text-xs uppercase tracking-[0.15em] text-muted mb-1">End Date</label>
-            <input
-              type="date"
-              lang="en-GB"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="surface-input h-10 rounded-lg px-3"
-            />
+
+          <div className="flex flex-col gap-2">
+            <Button className="w-full justify-center h-14" onClick={fetchHistory} disabled={loading}>{loading ? 'Loading...' : 'Show History'}</Button>
           </div>
-          <Button onClick={fetchHistory} disabled={loading}>{loading ? 'Loading...' : 'Show History'}</Button>
         </div>
       </section>
 
       <section className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div className="surface-card rounded-xl p-4">
+        <div className="surface-card rounded-2xl p-4 md:p-5">
           <p className="text-xs text-muted uppercase tracking-[0.15em]">Orders</p>
           <p className="text-2xl font-black text-on-light">{totals.count}</p>
         </div>
-        <div className="surface-card rounded-xl p-4">
+        <div className="surface-card rounded-2xl p-4 md:p-5">
           <p className="text-xs text-muted uppercase tracking-[0.15em]">Total Amount</p>
           <p className="text-2xl font-black text-on-light">Rs. {totals.price.toFixed(2)}</p>
         </div>
-        <div className="surface-card rounded-xl p-4">
+        <div className="surface-card rounded-2xl p-4 md:p-5">
           <p className="text-xs text-muted uppercase tracking-[0.15em]">Total Tax</p>
           <p className="text-2xl font-black text-on-light">Rs. {totals.tax.toFixed(2)}</p>
         </div>

@@ -80,7 +80,6 @@ export default function SetupPage({ onSetupComplete }) {
     setError('');
 
     try {
-      const appIdentity = await ipcService.invoke('get-app-identity').catch(() => null);
       const result = await ipcService.invoke('initialize-app-setup', {
         ...form,
         supabaseProjectUrl: form.supabaseProjectUrl.trim(),
@@ -98,10 +97,6 @@ export default function SetupPage({ onSetupComplete }) {
         adminName: form.adminName.trim(),
         adminUsername: form.adminUsername.trim(),
         adminPassword: form.adminPassword,
-        appInstanceId: appIdentity?.appInstanceId || '',
-        appVersion: appIdentity?.appVersion || '',
-        platform: appIdentity?.platform || '',
-        arch: appIdentity?.arch || '',
       });
 
       if (!result?.success) {

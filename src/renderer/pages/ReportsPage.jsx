@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { RefreshCw } from 'lucide-react';
+import DateField from '@/components/DateField';
 import ipcService from '@/services/ipcService';
 import { SalesOverviewTable, CategorySalesTable, TopItemsTable, TopCategoriesTable } from '@/components/DataTable';
 import { exportToExcel } from '@/lib/exportExcel';
 import { useSortableData } from '@/hooks/useSortableData';
+import { formatDateForDisplay, parseDateInput } from '@/lib/date';
 
 function SortHeader({ label, sortKey, sortConfig, onSort }) {
   const active = sortConfig.key === sortKey;
@@ -20,10 +22,7 @@ function SortHeader({ label, sortKey, sortConfig, onSort }) {
 }
 
 function localDateString(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return formatDateForDisplay(date);
 }
 
 function formatCurrency(value) {
@@ -45,9 +44,9 @@ function formatDate(value) {
 
 function ReportCard({ label, value }) {
   return (
-    <div className="surface-card rounded-xl p-4">
-      <p className="text-xs uppercase text-muted">{label}</p>
-      <p className="text-2xl font-black text-on-light">{value}</p>
+    <div className="surface-card rounded-2xl p-4 md:p-5 space-y-1">
+      <p className="text-xs uppercase tracking-[0.15em] text-muted">{label}</p>
+      <p className="text-2xl font-black text-on-light leading-none">{value}</p>
     </div>
   );
 }
@@ -137,12 +136,20 @@ export default function ReportsPage({ initialReport }) {
   }, []);
 
   const loadDateRangeReports = useCallback(async () => {
-    if (!startDate || !endDate) {
-      setError('Start date and end date are required.');
+    const startIso = parseDateInput(startDate);
+    const endIso = parseDateInput(endDate);
+
+    if (!startIso || !endIso) {
+      setError('Use DD-MM-YYYY for both dates.');
       return;
     }
-    if (startDate > endDate) {
+    if (startIso > endIso) {
       setError('End date cannot be earlier than start date.');
+      return;
+    }
+
+    if (!startDate || !endDate) {
+      setError('Start date and end date are required.');
       return;
     }
 
@@ -151,15 +158,15 @@ export default function ReportsPage({ initialReport }) {
 
     try {
       const results = await Promise.allSettled([
-        ipcService.invoke('get-sales-overview-data', startDate, endDate),
-        ipcService.invoke('get-category-wise-sales-data', startDate, endDate),
-        ipcService.requestReply('get-discounted-orders', 'discounted-orders-response', { startDate, endDate }),
-        ipcService.requestReply('get-top-selling-items', 'top-selling-items-response', { startDate, endDate }),
-        ipcService.requestReply('get-top-selling-categories', 'top-selling-categories-response', { startDate, endDate }),
-        ipcService.requestReply('get-item-summary', 'item-summary-response', { startDate, endDate }),
-        ipcService.requestReply('get-employee-analysis', 'employee-analysis-response', { startDate, endDate }),
-        ipcService.requestReply('get-best-in-category', 'best-in-category-response', { startDate, endDate }),
-        ipcService.requestReply('get-tax-on-items', 'tax-on-items-response', { startDate, endDate }),
+        ipcService.invoke('get-sales-overview-data', startIso, endIso),
+        ipcService.invoke('get-category-wise-sales-data', startIso, endIso),
+        ipcService.requestReply('get-discounted-orders', 'discounted-orders-response', { startDate: startIso, endDate: endIso }),
+        ipcService.requestReply('get-top-selling-items', 'top-selling-items-response', { startDate: startIso, endDate: endIso }),
+        ipcService.requestReply('get-top-selling-categories', 'top-selling-categories-response', { startDate: startIso, endDate: endIso }),
+        ipcService.requestReply('get-item-summary', 'item-summary-response', { startDate: startIso, endDate: endIso }),
+        ipcService.requestReply('get-employee-analysis', 'employee-analysis-response', { startDate: startIso, endDate: endIso }),
+        ipcService.requestReply('get-best-in-category', 'best-in-category-response', { startDate: startIso, endDate: endIso }),
+        ipcService.requestReply('get-tax-on-items', 'tax-on-items-response', { startDate: startIso, endDate: endIso }),
       ]);
 
       if (!mountedRef.current) return;
@@ -347,38 +354,43 @@ export default function ReportsPage({ initialReport }) {
 
   return (
     <div className="space-y-4">
-      <section className="surface-card rounded-2xl p-4 md:p-5">
-        <div className="flex flex-wrap items-end gap-3">
+      <section className="surface-card rounded-2xl p-4 md:p-5 space-y-4">
+        <div className="space-y-1">
+          <h2 className="text-xl font-black text-on-light">Reports</h2>
+          <p className="text-sm text-muted">Generate summaries, date-range reports, and exports using the same app theme.</p>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-end">
+          <div className="flex flex-wrap items-end gap-3">
           {showDateRange && (
             <>
-              <div>
-                <label className="block text-xs uppercase text-muted mb-1">Start Date</label>
-                <input type="date" lang="en-GB" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="surface-input h-10 rounded-lg px-3" />
-              </div>
-              <div>
-                <label className="block text-xs uppercase text-muted mb-1">End Date</label>
-                <input type="date" lang="en-GB" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="surface-input h-10 rounded-lg px-3" />
-              </div>
+              <DateField label="Start Date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="min-w-[220px]" />
+              <DateField label="End Date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="min-w-[220px]" />
             </>
           )}
-          <Button
-            onClick={loadReports}
-            disabled={loading}
-            aria-label={activeReport === 'dayEndSummary' ? 'Refresh day-end summary' : 'Run reports'}
-            title={activeReport === 'dayEndSummary' ? 'Refresh day-end summary' : 'Run reports'}
-          >
-            {loading ? 'Loading...' : activeReport === 'dayEndSummary' ? (
-              <>
-                <RefreshCw className="h-4 w-4" aria-hidden="true" />
-                <span className="sr-only">Refresh</span>
-              </>
-            ) : 'Run Reports'}
-          </Button>
-          {showDateRange && (
-            <Button variant="outline" onClick={exportCurrentReport} disabled={exporting}>
-              {exporting ? 'Exporting...' : 'Export Excel'}
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Button
+              className="w-full justify-center"
+              onClick={loadReports}
+              disabled={loading}
+              aria-label={activeReport === 'dayEndSummary' ? 'Refresh day-end summary' : 'Run reports'}
+              title={activeReport === 'dayEndSummary' ? 'Refresh day-end summary' : 'Run reports'}
+            >
+              {loading ? 'Loading...' : activeReport === 'dayEndSummary' ? (
+                <>
+                  <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                  <span className="sr-only">Refresh</span>
+                </>
+              ) : 'Run Reports'}
             </Button>
-          )}
+            {showDateRange && (
+              <Button className="w-full justify-center" variant="secondary" onClick={exportCurrentReport} disabled={exporting}>
+                {exporting ? 'Exporting...' : 'Export Excel'}
+              </Button>
+            )}
+          </div>
         </div>
       </section>
 
@@ -396,7 +408,7 @@ export default function ReportsPage({ initialReport }) {
           </section>
 
           <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="surface-card rounded-xl p-4 space-y-2">
+            <div className="surface-card rounded-2xl p-4 md:p-5 space-y-2">
               <p className="text-sm font-semibold text-on-light">Most Sold Items</p>
               {dayEnd.mostSoldItems.length === 0 ? (
                 <p className="text-sm text-muted">No data</p>
@@ -404,7 +416,7 @@ export default function ReportsPage({ initialReport }) {
                 <p key={i} className="text-sm text-on-light">{i + 1}. {item}</p>
               ))}
             </div>
-            <div className="surface-card rounded-xl p-4 space-y-2">
+            <div className="surface-card rounded-2xl p-4 md:p-5 space-y-2">
               <p className="text-sm font-semibold text-on-light">Most Sold Categories</p>
               {dayEnd.mostSoldCategories.length === 0 ? (
                 <p className="text-sm text-muted">No data</p>
@@ -412,7 +424,7 @@ export default function ReportsPage({ initialReport }) {
                 <p key={i} className="text-sm text-on-light">{i + 1}. {cat}</p>
               ))}
             </div>
-            <div className="surface-card rounded-xl p-4 space-y-2">
+            <div className="surface-card rounded-2xl p-4 md:p-5 space-y-2">
               <p className="text-sm font-semibold text-on-light">Highest Revenue Items</p>
               {dayEnd.highestRevenueItems.length === 0 ? (
                 <p className="text-sm text-muted">No data</p>
@@ -420,7 +432,7 @@ export default function ReportsPage({ initialReport }) {
                 <p key={i} className="text-sm text-on-light">{i + 1}. {item}</p>
               ))}
             </div>
-            <div className="surface-card rounded-xl p-4 space-y-2">
+            <div className="surface-card rounded-2xl p-4 md:p-5 space-y-2">
               <p className="text-sm font-semibold text-on-light">Highest Revenue Category</p>
               {dayEnd.highestRevenueCategory.length === 0 ? (
                 <p className="text-sm text-muted">No data</p>

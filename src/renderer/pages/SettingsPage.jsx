@@ -27,12 +27,6 @@ function ThemeTab() {
       colors: ['#262424', '#EEE5DA', '#6B6B6B'],
     },
     {
-      key: 'classicMono',
-      title: 'Classic Black + White',
-      subtitle: '000000 and FFFFFF',
-      colors: ['#000000', '#FFFFFF', '#6B6B6B'],
-    },
-    {
       key: 'navySunburst',
       title: 'Navy + Sunburst',
       subtitle: '0A122A and FFF7E6',
@@ -43,12 +37,6 @@ function ThemeTab() {
       title: 'Forest + Cream',
       subtitle: '004643 and F0EDE5',
       colors: ['#004643', '#F0EDE5', '#6B6B6B'],
-    },
-    {
-      key: 'mintRose',
-      title: 'Mint + Rose',
-      subtitle: 'F0FFF0 and C54B8C',
-      colors: ['#F0FFF0', '#C54B8C', '#6B6B6B'],
     },
   ];
 
@@ -268,6 +256,7 @@ function EmployeeManagementTab({ user }) {
     password: '',
     pin: '',
   });
+  const [addEmployeeStep, setAddEmployeeStep] = useState(1);
   const [editForm, setEditForm] = useState({
     userid: null,
     name: '',
@@ -321,6 +310,66 @@ function EmployeeManagementTab({ user }) {
     );
   });
 
+  const renderStepDots = (currentStep, totalSteps) => (
+    <div className="flex items-center gap-2">
+      {Array.from({ length: totalSteps }, (_, index) => {
+        const step = index + 1;
+        const active = step <= currentStep;
+        return (
+          <span
+            key={step}
+            className="h-2.5 w-2.5 rounded-full border"
+            style={{
+              backgroundColor: active ? 'var(--text-on-light)' : 'transparent',
+              borderColor: 'var(--text-on-light)',
+              opacity: active ? 1 : 0.4,
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+
+  const resetAddEmployeeWizard = () => {
+    setAddEmployeeStep(1);
+    setForm({ name: '', username: '', password: '', pin: '' });
+  };
+
+  const handleAddEmployeeNext = async () => {
+    if (addEmployeeStep === 1) {
+      if (!form.name.trim()) {
+        setError('Employee name is required.');
+        return;
+      }
+      setAddEmployeeStep(2);
+      return;
+    }
+
+    if (addEmployeeStep === 2) {
+      if (!form.username.trim()) {
+        setError('Username is required.');
+        return;
+      }
+      const usernameCheck = await ipcService.invoke('check-employee-username-available', {
+        username: form.username.trim(),
+      });
+      if (!usernameCheck?.success || !usernameCheck?.available) {
+        setError(usernameCheck?.message || 'Username already exists.');
+        return;
+      }
+      setAddEmployeeStep(3);
+      return;
+    }
+
+    if (addEmployeeStep === 3) {
+      if (!form.password || form.password.length < 6) {
+        setError('Password must be at least 6 characters.');
+        return;
+      }
+      setAddEmployeeStep(4);
+    }
+  };
+
   const createEmployee = async () => {
     setBusy(true);
     setError('');
@@ -339,7 +388,7 @@ function EmployeeManagementTab({ user }) {
       }
 
       setMessage(result?.message || 'Employee account created.');
-      setForm({ name: '', username: '', password: '', pin: '' });
+      resetAddEmployeeWizard();
       setShowAddEmployeeModal(false);
       await loadUsers();
     } catch (err) {
@@ -462,7 +511,12 @@ function EmployeeManagementTab({ user }) {
           className="surface-input h-10 rounded-lg px-3 w-full sm:w-64"
           placeholder="Search employees..."
         />
-        <Button onClick={() => setShowAddEmployeeModal(true)} disabled={busy}>Add Employee</Button>
+        <Button onClick={() => {
+          setError('');
+          setMessage('');
+          resetAddEmployeeWizard();
+          setShowAddEmployeeModal(true);
+        }} disabled={busy}>Add Employee</Button>
       </div>
 
       {showAddEmployeeModal && (
@@ -470,23 +524,89 @@ function EmployeeManagementTab({ user }) {
           <div className="surface-card w-full max-w-2xl rounded-2xl p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
             <div className="mb-4">
               <h3 className="text-lg font-black text-on-light">Add Employee</h3>
-              <p className="text-sm text-muted mt-1">Create a new employee account with username, password, and PIN.</p>
+              <p className="text-sm text-muted mt-1">Step {addEmployeeStep} of 4</p>
+              <div className="mt-2">{renderStepDots(addEmployeeStep, 4)}</div>
             </div>
 
-            <form onSubmit={(event) => {
+            <form onSubmit={async (event) => {
               event.preventDefault();
-              createEmployee();
+              if (addEmployeeStep === 4) {
+                createEmployee();
+                return;
+              }
+              await handleAddEmployeeNext();
             }}>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <input ref={addEmployeeNameInputRef} value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} className="surface-input h-10 rounded-lg px-3" placeholder="Employee Name" />
-                <input value={form.username} onChange={(e) => setForm((prev) => ({ ...prev, username: e.target.value }))} className="surface-input h-10 rounded-lg px-3" placeholder="Username" />
-                <input type="password" value={form.password} onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))} className="surface-input h-10 rounded-lg px-3" placeholder="Password (min 6)" />
-                <input value={form.pin} onChange={(e) => setForm((prev) => ({ ...prev, pin: e.target.value.replace(/\D+/g, '').slice(0, 8) }))} className="surface-input h-10 rounded-lg px-3" placeholder="PIN (4-8 digits)" />
+              <div className="space-y-3">
+                {addEmployeeStep === 1 && (
+                  <div>
+                    <label className="block text-xs uppercase text-muted mb-1">Employee Name</label>
+                    <input
+                      ref={addEmployeeNameInputRef}
+                      value={form.name}
+                      onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+                      className="surface-input h-10 rounded-lg px-3 w-full"
+                      placeholder="Employee Name"
+                      autoFocus
+                    />
+                  </div>
+                )}
+                {addEmployeeStep === 2 && (
+                  <div>
+                    <label className="block text-xs uppercase text-muted mb-1">Username</label>
+                    <input
+                      value={form.username}
+                      onChange={(e) => setForm((prev) => ({ ...prev, username: e.target.value }))}
+                      className="surface-input h-10 rounded-lg px-3 w-full"
+                      placeholder="Username"
+                      autoFocus
+                    />
+                  </div>
+                )}
+                {addEmployeeStep === 3 && (
+                  <div>
+                    <label className="block text-xs uppercase text-muted mb-1">Password</label>
+                    <input
+                      type="password"
+                      value={form.password}
+                      onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))}
+                      className="surface-input h-10 rounded-lg px-3 w-full"
+                      placeholder="Password (min 6)"
+                      autoFocus
+                    />
+                  </div>
+                )}
+                {addEmployeeStep === 4 && (
+                  <div>
+                    <label className="block text-xs uppercase text-muted mb-1">PIN</label>
+                    <input
+                      type="password"
+                      value={form.pin}
+                      onChange={(e) => setForm((prev) => ({ ...prev, pin: e.target.value.replace(/\D+/g, '').slice(0, 8) }))}
+                      className="surface-input h-10 rounded-lg px-3 w-full"
+                      placeholder="PIN (4-8 digits)"
+                      autoFocus
+                    />
+                  </div>
+                )}
               </div>
 
               <div className="mt-4 flex justify-end gap-2">
-                <Button type="button" variant="secondary" onClick={() => setShowAddEmployeeModal(false)} disabled={busy}>Cancel</Button>
-                <Button type="submit" disabled={busy}>{busy ? 'Working...' : 'Add Employee'}</Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    if (addEmployeeStep > 1) {
+                      setAddEmployeeStep((step) => step - 1);
+                      return;
+                    }
+                    resetAddEmployeeWizard();
+                    setShowAddEmployeeModal(false);
+                  }}
+                  disabled={busy}
+                >
+                  {addEmployeeStep > 1 ? 'Back' : 'Cancel'}
+                </Button>
+                <Button type="submit" disabled={busy}>{busy ? 'Working...' : (addEmployeeStep === 4 ? 'Add Employee' : 'Next')}</Button>
               </div>
             </form>
           </div>
@@ -696,6 +816,7 @@ function UpdateTab() {
   const [busy, setBusy] = useState(false);
   const [subscription, setSubscription] = useState(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
+  const [subscriptionError, setSubscriptionError] = useState('');
   const [subscribeInfo, setSubscribeInfo] = useState('');
 
   const formatDateTime = (value) => {
@@ -756,6 +877,7 @@ function UpdateTab() {
 
     const load = async () => {
       setSubscriptionLoading(true);
+      setSubscriptionError('');
       try {
         const snapshot = await updateService.getStatus();
         if (mounted && snapshot) {
@@ -766,16 +888,20 @@ function UpdateTab() {
           const subscriptionSnapshot = await updateService.getSubscriptionStatus();
           if (mounted) {
             setSubscription(subscriptionSnapshot || null);
+            setSubscriptionError(subscriptionSnapshot?.success === false ? (subscriptionSnapshot?.message || 'Could not load subscription status.') : '');
           }
         } else {
           if (mounted) {
-            setSubscription({ success: false, message: 'Subscription status unavailable offline.' });
+            setSubscription({ success: false, offline: true, message: 'Subscription status unavailable offline.' });
+            setSubscriptionError('Subscription status unavailable offline.');
           }
         }
       } catch (error) {
         if (mounted) {
           setState((prev) => ({ ...prev, error: 'Could not load update status.' }));
-          setSubscription({ success: false, message: isOnline ? 'Could not load subscription status.' : 'Subscription status unavailable offline.' });
+          const message = isOnline ? 'Could not load subscription status.' : 'Subscription status unavailable offline.';
+          setSubscription({ success: false, message });
+          setSubscriptionError(message);
         }
       } finally {
         if (mounted) {
@@ -846,10 +972,11 @@ function UpdateTab() {
   const releaseNotes = state.updateInfo?.releaseNotes || '';
   const isSubscribed = Boolean(subscription?.subscribed);
   const hasSubscriptionRecord = Boolean(subscription?.subscription);
+  const subscriptionUnavailable = Boolean(subscriptionError) || Boolean(subscription?.offline);
   const subscriptionStatusText = subscriptionLoading
     ? 'Loading...'
-    : (!isOnline && !subscription?.subscribed)
-      ? 'Offline'
+    : subscriptionUnavailable
+      ? 'Unavailable'
       : (subscription?.subscription?.status || (subscription?.subscribed ? 'active' : 'not added'));
   const statusConfig = getStatusConfig();
   const isDownloading = state.downloading || state.status === 'downloading';
@@ -875,10 +1002,12 @@ function UpdateTab() {
       <div className="surface-card rounded-2xl p-4 space-y-3">
         <div className="flex items-center justify-between">
           <p className="text-sm font-semibold text-on-light">Subscription</p>
-          <span className={`text-xs font-semibold px-2 py-1 rounded ${isSubscribed ? 'bg-success/15 text-success' : 'bg-black/10 text-on-light'}`}>
+          <span className={`text-xs font-semibold px-2 py-1 rounded ${isSubscribed ? 'bg-success/15 text-success' : subscriptionUnavailable ? 'bg-warning/15 text-warning' : 'bg-black/10 text-on-light'}`}>
             {subscriptionStatusText}
           </span>
         </div>
+
+        {subscriptionError ? <p className="text-xs text-muted">{subscriptionError}</p> : null}
 
         {hasSubscriptionRecord ? (
           <div className="grid grid-cols-3 gap-2 text-xs">
@@ -1027,12 +1156,17 @@ function UpdateTab() {
 
 export default function SettingsPage({ user, onLogout, initialTab }) {
   const activeTab = initialTab || 'profile';
+  const toast = useToast();
   const [name, setName] = useState(user?.name || '');
   const [username, setUsername] = useState(user?.username || '');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [currentPin, setCurrentPin] = useState('');
   const [newPin, setNewPin] = useState('');
+  const [confirmNewPin, setConfirmNewPin] = useState('');
+  const [passwordStep, setPasswordStep] = useState(1);
+  const [pinStep, setPinStep] = useState(1);
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
   const [savingPin, setSavingPin] = useState(false);
@@ -1042,6 +1176,92 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
   const clearAlerts = () => {
     setMessage('');
     setError('');
+  };
+
+  const renderStepDots = (currentStep, totalSteps) => (
+    <div className="flex items-center gap-2">
+      {Array.from({ length: totalSteps }, (_, index) => {
+        const step = index + 1;
+        const active = step <= currentStep;
+        return (
+          <span
+            key={step}
+            className="h-2.5 w-2.5 rounded-full border"
+            style={{
+              backgroundColor: active ? 'var(--text-on-light)' : 'transparent',
+              borderColor: 'var(--text-on-light)',
+              opacity: active ? 1 : 0.4,
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+
+  const handlePasswordNext = async () => {
+    if (passwordStep === 1) {
+      if (!currentPassword.trim()) {
+        toast.error('Current password is required.');
+        return;
+      }
+      const passwordCheck = await ipcService.invoke('verify-current-password', {
+        userid: user.userid,
+        currentPassword,
+      });
+      if (!passwordCheck?.success) {
+        toast.error(passwordCheck?.message || 'Current password is incorrect.');
+        return;
+      }
+      setPasswordStep(2);
+      return;
+    }
+
+    if (passwordStep === 2) {
+      if (!newPassword.trim()) {
+        toast.error('New password is required.');
+        return;
+      }
+      if (newPassword.length < 6) {
+        toast.error('New password must be at least 6 characters.');
+        return;
+      }
+      setPasswordStep(3);
+    }
+  };
+
+  const handlePinNext = async () => {
+    if (pinStep === 1) {
+      if (!currentPin.trim()) {
+        toast.error('Current PIN is required.');
+        return;
+      }
+      if (!/^\d{4,8}$/.test(currentPin.trim())) {
+        toast.error('Current PIN must be 4 to 8 digits.');
+        return;
+      }
+      const pinCheck = await ipcService.invoke('verify-current-pin', {
+        userid: user.userid,
+        currentPin: currentPin.trim(),
+      });
+      if (!pinCheck?.success) {
+        toast.error(pinCheck?.message || 'Current PIN is incorrect.');
+        return;
+      }
+      setPinStep(2);
+      return;
+    }
+
+    if (pinStep === 2) {
+      if (!newPin.trim()) {
+        toast.error('New PIN is required.');
+        return;
+      }
+      if (!/^\d{4,8}$/.test(newPin.trim())) {
+        toast.error('New PIN must be 4 to 8 digits.');
+        return;
+      }
+      setPinStep(3);
+    }
   };
 
   const updateProfile = async () => {
@@ -1075,10 +1295,19 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
   };
 
   const changePassword = async () => {
-    const toast = useToast();
     clearAlerts();
     if (!user?.userid) {
       toast.error('No active session found.');
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      toast.error('New password must be at least 6 characters.');
+      return;
+    }
+
+    if (newPassword !== confirmNewPassword) {
+      toast.error('Passwords do not match.');
       return;
     }
 
@@ -1098,6 +1327,8 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
       toast.success(result.message || 'Password changed successfully.');
       setCurrentPassword('');
       setNewPassword('');
+      setConfirmNewPassword('');
+      setPasswordStep(1);
       await onLogout();
     } catch (passwordError) {
       console.error('Password update failed:', passwordError);
@@ -1108,10 +1339,19 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
   };
 
   const changePin = async () => {
-    const toast = useToast();
     clearAlerts();
     if (!user?.userid) {
       toast.error('No active session found.');
+      return;
+    }
+
+    if (!/^\d{4,8}$/.test(newPin)) {
+      toast.error('New PIN must be 4 to 8 digits.');
+      return;
+    }
+
+    if (newPin !== confirmNewPin) {
+      toast.error('PINs do not match.');
       return;
     }
 
@@ -1131,6 +1371,8 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
       toast.success(result.message || 'PIN changed successfully.');
       setCurrentPin('');
       setNewPin('');
+      setConfirmNewPin('');
+      setPinStep(1);
     } catch (pinError) {
       console.error('PIN update failed:', pinError);
       toast.error('Failed to change PIN.');
@@ -1175,30 +1417,64 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
             </div>
 
             <div className="space-y-3">
-              <div>
-                <label className="block text-xs uppercase text-muted mb-1">Current Password</label>
-                <input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} className="surface-input h-10 w-full rounded-lg px-3" />
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-muted">Password step {passwordStep} of 3</p>
+                {renderStepDots(passwordStep, 3)}
               </div>
-              <div>
-                <label className="block text-xs uppercase text-muted mb-1">New Password</label>
-                <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="surface-input h-10 w-full rounded-lg px-3" />
-              </div>
+              {passwordStep === 1 && (
+                <div>
+                  <label className="block text-xs uppercase text-muted mb-1">Current Password</label>
+                  <input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} className="surface-input h-10 w-full rounded-lg px-3" />
+                </div>
+              )}
+              {passwordStep === 2 && (
+                <div>
+                  <label className="block text-xs uppercase text-muted mb-1">New Password</label>
+                  <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="surface-input h-10 w-full rounded-lg px-3" />
+                </div>
+              )}
+              {passwordStep === 3 && (
+                <div>
+                  <label className="block text-xs uppercase text-muted mb-1">Confirm New Password</label>
+                  <input type="password" value={confirmNewPassword} onChange={(e) => setConfirmNewPassword(e.target.value)} className="surface-input h-10 w-full rounded-lg px-3" />
+                </div>
+              )}
             </div>
 
-            <Button onClick={changePassword} disabled={savingPassword}>{savingPassword ? 'Updating...' : 'Change Password'}</Button>
+            <div className="flex gap-2">
+              <Button type="button" variant="secondary" onClick={() => setPasswordStep((s) => Math.max(1, s - 1))} disabled={savingPassword || passwordStep === 1}>Back</Button>
+              <Button type="button" onClick={passwordStep === 3 ? changePassword : handlePasswordNext} disabled={savingPassword}>{savingPassword ? 'Updating...' : (passwordStep === 3 ? 'Change Password' : 'Next')}</Button>
+            </div>
 
             <div className="border-t border-on-light pt-4 space-y-3">
-              <div>
-                <label className="block text-xs uppercase text-muted mb-1">Current PIN</label>
-                <input value={currentPin} onChange={(e) => setCurrentPin(e.target.value.replace(/\D+/g, '').slice(0, 8))} className="surface-input h-10 w-full rounded-lg px-3" placeholder="4-8 digits" />
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-muted">PIN step {pinStep} of 3</p>
+                {renderStepDots(pinStep, 3)}
               </div>
-              <div>
-                <label className="block text-xs uppercase text-muted mb-1">New PIN</label>
-                <input value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D+/g, '').slice(0, 8))} className="surface-input h-10 w-full rounded-lg px-3" placeholder="4-8 digits" />
-              </div>
+              {pinStep === 1 && (
+                <div>
+                  <label className="block text-xs uppercase text-muted mb-1">Current PIN</label>
+                  <input type="password" value={currentPin} onChange={(e) => setCurrentPin(e.target.value.replace(/\D+/g, '').slice(0, 8))} className="surface-input h-10 w-full rounded-lg px-3" placeholder="4-8 digits" />
+                </div>
+              )}
+              {pinStep === 2 && (
+                <div>
+                  <label className="block text-xs uppercase text-muted mb-1">New PIN</label>
+                  <input type="password" value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D+/g, '').slice(0, 8))} className="surface-input h-10 w-full rounded-lg px-3" placeholder="4-8 digits" />
+                </div>
+              )}
+              {pinStep === 3 && (
+                <div>
+                  <label className="block text-xs uppercase text-muted mb-1">Confirm New PIN</label>
+                  <input type="password" value={confirmNewPin} onChange={(e) => setConfirmNewPin(e.target.value.replace(/\D+/g, '').slice(0, 8))} className="surface-input h-10 w-full rounded-lg px-3" placeholder="4-8 digits" />
+                </div>
+              )}
             </div>
 
-            <Button onClick={changePin} disabled={savingPin}>{savingPin ? 'Updating...' : 'Change PIN'}</Button>
+            <div className="flex gap-2">
+              <Button type="button" variant="secondary" onClick={() => setPinStep((s) => Math.max(1, s - 1))} disabled={savingPin || pinStep === 1}>Back</Button>
+              <Button type="button" onClick={pinStep === 3 ? changePin : handlePinNext} disabled={savingPin}>{savingPin ? 'Updating...' : (pinStep === 3 ? 'Change PIN' : 'Next')}</Button>
+            </div>
           </section>
 
           {/* Error/message display removed - now using toast notifications */}

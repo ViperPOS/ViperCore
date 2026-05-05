@@ -68,6 +68,15 @@ const allowedInvokeChannels = new Set([
   'change-user-pin',
   'load-receipt-template',
   'save-receipt-template',
+  'admin-recover-password',
+  'verify-current-password',
+  'verify-current-pin',
+  'verify-master-pin',
+  'verify-admin-username',
+  'check-employee-username-available',
+  'get-all-employees',
+  'admin-reset-employee-password',
+  'admin-reset-employee-pin',
 ]);
 
 const allowedSendChannels = new Set([

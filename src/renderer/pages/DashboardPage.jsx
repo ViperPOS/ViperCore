@@ -179,11 +179,16 @@ export default function DashboardPage({ user, onLogout }) {
         style={{ backgroundColor: 'var(--bg-sidebar)', borderRight: '1px solid var(--border-on-dark)' }}
       >
         {/* Brand */}
-        <div className="px-6 py-6" style={{ borderBottom: '1px solid var(--border-on-dark)' }}>
-          <p className="text-sm font-bold tracking-[0.15em]" style={{ color: 'var(--text-on-dark)' }}>
+        <div className="px-6 py-6 flex items-center gap-3" style={{ borderBottom: '1px solid var(--border-on-dark)' }}>
+          <img
+            src="./favicon.ico"
+            alt="ViperCore logo"
+            className="w-10 h-10 rounded-sm object-contain"
+          />
+          <p className="text-lg font-bold tracking-[0.15em]" style={{ color: 'var(--text-on-dark)' }}>
             ViperCore
           </p>
-          <p className="text-[10px] mt-1" style={{ color: 'var(--text-on-dark)', opacity: 0.4 }}>
+          <p className="text-sm mt-2" style={{ color: 'var(--text-on-dark)', opacity: 0.4 }}>
             {user?.username ?? 'Staff'}
           </p>
         </div>

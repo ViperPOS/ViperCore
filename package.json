@@ -14,7 +14,7 @@
     "verify:arch": "node scripts/verify-compat-shims.js",
     "verify:layout": "node scripts/verify-project-structure.js",
     "verify:structure": "npm run verify:arch && npm run verify:layout",
-    "verify:syntax": "node --check src/main/main.js && node --check src/main/backup.js && node --check src/main/restore.js",
+    "verify:syntax": "node --check src/main/main.js",
     "validate": "npm run verify:structure && npm run verify:syntax && npm run build",
     "package": "npm run build && electron-builder --dir",
     "make": "npm run build && electron-builder",
@@ -27,12 +27,9 @@
     "artifactName": "ViperCore Setup.exe",
     "files": [
       "main.js",
-      "backup.js",
-      "restore.js",
       "src/preload.js",
       "dist/**/*",
-      "src/main/**/*",
-      "src/resources/**/*"
+      "src/main/**/*"
     ],
     "extraResources": [
       {

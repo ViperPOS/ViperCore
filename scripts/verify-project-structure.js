@@ -12,10 +12,8 @@ const requiredPaths = [
   "src/renderer/App.jsx",
   "src/renderer/pages/DashboardPage.jsx",
   "src/renderer/services/ipcService.js",
-  "vite.config.js",
+  "vite.config.mjs",
   "main.js",
-  "backup.js",
-  "restore.js",
   "package.json",
 ];
 

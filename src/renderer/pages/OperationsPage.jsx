@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog, PromptDialog } from '@/components/ui/dialogs';
+import DateField from '@/components/DateField';
 import ipcService from '@/services/ipcService';
+import { formatDateForDisplay, parseDateInput } from '@/lib/date';
 
 function localDateString(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return formatDateForDisplay(date);
 }
 
 function formatCurrency(value) {
@@ -139,6 +138,18 @@ export default function OperationsPage({ initialTab }) {
   };
 
   const fetchDiscountedOrders = async () => {
+    const startIso = parseDateInput(startDate);
+    const endIso = parseDateInput(endDate);
+
+    if (!startIso || !endIso) {
+      setError('Use DD-MM-YYYY for both dates.');
+      return;
+    }
+    if (startIso > endIso) {
+      setError('End date cannot be earlier than start date.');
+      return;
+    }
+
     if (!startDate || !endDate) {
       setError('Select start and end dates first.');
       return;
@@ -148,8 +159,8 @@ export default function OperationsPage({ initialTab }) {
     setMessage('');
     try {
       const result = await ipcService.requestReply('get-discounted-orders', 'discounted-orders-response', {
-        startDate,
-        endDate,
+        startDate: startIso,
+        endDate: endIso,
       });
       setDiscountedOrders(Array.isArray(result?.orders) ? result.orders : []);
     } catch (fetchError) {
@@ -162,6 +173,18 @@ export default function OperationsPage({ initialTab }) {
   };
 
   const fetchDeletedOrders = async () => {
+    const startIso = parseDateInput(startDate);
+    const endIso = parseDateInput(endDate);
+
+    if (!startIso || !endIso) {
+      setError('Use DD-MM-YYYY for both dates.');
+      return;
+    }
+    if (startIso > endIso) {
+      setError('End date cannot be earlier than start date.');
+      return;
+    }
+
     if (!startDate || !endDate) {
       setError('Select start and end dates first.');
       return;
@@ -171,8 +194,8 @@ export default function OperationsPage({ initialTab }) {
     setMessage('');
     try {
       const result = await ipcService.requestReply('get-deleted-orders', 'deleted-orders-response', {
-        startDate,
-        endDate,
+        startDate: startIso,
+        endDate: endIso,
       });
       setDeletedOrders(Array.isArray(result?.orders) ? result.orders : []);
     } catch (fetchError) {
@@ -293,27 +316,26 @@ export default function OperationsPage({ initialTab }) {
     <div className="space-y-4">
       {(activeTab === 'discountedOrders' || activeTab === 'deletedOrders') && (
         <section className="surface-card rounded-2xl p-4 md:p-5">
-          <div className="flex flex-wrap md:flex-nowrap items-end gap-3">
-            <div className="shrink-0">
-              <label className="block text-xs uppercase text-muted mb-1">Start</label>
-              <input type="date" lang="en-GB" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="surface-input h-10 rounded-lg px-3" />
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(15rem,18rem)] lg:items-end">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <DateField label="Start" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+              <DateField label="End" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
             </div>
-            <div className="shrink-0">
-              <label className="block text-xs uppercase text-muted mb-1">End</label>
-              <input type="date" lang="en-GB" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="surface-input h-10 rounded-lg px-3" />
+
+            <div className="flex flex-col gap-2 lg:items-stretch">
+              {activeTab === 'discountedOrders' && (
+                <>
+                  <Button className="w-full justify-center" variant="default" onClick={fetchDiscountedOrders} disabled={loadingDiscounted}>{loadingDiscounted ? 'Loading...' : 'Load Discounted Orders'}</Button>
+                  <Button className="w-full justify-center" variant="secondary" onClick={clearDiscountedOrders} disabled={busy}>Clear</Button>
+                </>
+              )}
+              {activeTab === 'deletedOrders' && (
+                <>
+                  <Button className="w-full justify-center" variant="default" onClick={fetchDeletedOrders} disabled={loadingDeleted}>{loadingDeleted ? 'Loading...' : 'Load Deleted Orders'}</Button>
+                  <Button className="w-full justify-center" variant="secondary" onClick={clearDeletedOrders} disabled={busy}>Clear</Button>
+                </>
+              )}
             </div>
-            {activeTab === 'discountedOrders' && (
-              <>
-                <Button className="shrink-0" variant="secondary" onClick={fetchDiscountedOrders} disabled={loadingDiscounted}>{loadingDiscounted ? 'Loading...' : 'Load Discounted Orders'}</Button>
-                <Button className="shrink-0" variant="ghost" onClick={clearDiscountedOrders} disabled={busy}>Clear</Button>
-              </>
-            )}
-            {activeTab === 'deletedOrders' && (
-              <>
-                <Button className="shrink-0" variant="secondary" onClick={fetchDeletedOrders} disabled={loadingDeleted}>{loadingDeleted ? 'Loading...' : 'Load Deleted Orders'}</Button>
-                <Button className="shrink-0" variant="ghost" onClick={clearDeletedOrders} disabled={busy}>Clear</Button>
-              </>
-            )}
           </div>
         </section>
       )}
